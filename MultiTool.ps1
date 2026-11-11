@@ -3,7 +3,8 @@
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.11.3'
+$AppVersion = '2026.11.11.4'
+$DefaultUpdateUrl = ''
 $ScriptPath = $PSCommandPath
 $Root    = Split-Path -Parent $ScriptPath
 $Installed = $Root -like "$env:ProgramFiles*"
@@ -194,7 +195,7 @@ function Get-Settings {
     $def = @{ Restore = $true; AutoEnabled = $false; AutoDay = 'Sunday'; AutoTime = '12:00'; Theme = 'dark'; Tray = $true; UpdateUrl = 'https://raw.githubusercontent.com/Erodyne/MultiTool/main'
               WinL = $null; WinT = $null; WinW = $null; WinH = $null; WinMax = $false; Lhm = $false
               ShopName = ''; ShopPhone = ''; ShopEmail = ''; ShopWeb = ''; ShopLogo = ''; WarrantyMonths = 24
-              BackupDest = ''; LastBackup = ''; BackupAuto = $false; BackupTime = '13:00'; SensLog = $false; Lang = 'it'; Prefetch = $true }
+              BackupDest = ''; LastBackup = ''; BackupAuto = $false; BackupTime = '13:00'; SensLog = $false; Lang = 'it'; Prefetch = $true; AutoSelfUpdate = $true }
     foreach ($k in $def.Keys) { if (-not ($s.PSObject.Properties.Name -contains $k)) { $s | Add-Member -NotePropertyName $k -NotePropertyValue $def[$k] -Force } }
     $s
 }
@@ -1750,8 +1751,9 @@ $xaml = @'
                   <StackPanel>
                     <TextBlock Text="AGGIORNAMENTI DI MULTITOOL" Style="{StaticResource CardLabel}"/>
                     <TextBlock x:Name="SetUpdInfo" Foreground="#9AA0B8" FontSize="13" Margin="0,12,0,10" TextWrapping="Wrap"/>
+                    <CheckBox x:Name="SetSelfUpd" Style="{StaticResource Switch}" Margin="0,0,0,12" FontSize="14" Content="Aggiorna MultiTool automaticamente"/>
                     <TextBox x:Name="SetUpdUrl" Style="{StaticResource Input}" FontSize="12"/>
-                    <TextBlock Text="Indirizzo della cartella online con version.txt e MultiTool.ps1 (es. GitHub raw)." Foreground="#6B7290" FontSize="11" Margin="2,6,0,10" TextWrapping="Wrap"/>
+                    <TextBlock Text="Lascia vuoto per usare GitHub (Erodyne/MultiTool), oppure indica un'altra cartella online con version.txt e MultiTool.ps1." Foreground="#6B7290" FontSize="11" Margin="2,6,0,10" TextWrapping="Wrap"/>
                     <StackPanel Orientation="Horizontal">
                       <Button x:Name="SetUpdCheck" Style="{StaticResource GhostBtn}" Content="Controlla ora" Padding="16,8" FontSize="13" Margin="0,0,8,0"/>
                       <Button x:Name="SetUpdGo" Style="{StaticResource AccentBtn}" Content="Aggiorna" Padding="16,8" FontSize="13" Visibility="Collapsed"/>
@@ -1920,7 +1922,7 @@ $TrEn['Importa elenco'] = 'Import list'
 $TrEn['Impostazioni'] = 'Settings'
 $TrEn['Impostazioni Windows Update'] = 'Windows Update settings'
 $TrEn['In "Aggiorna programmi" seleziona un programma e premi "Escludi selezionati".'] = 'In "Update apps" select an app and press "Exclude selected".'
-$TrEn['Indirizzo della cartella online con version.txt e MultiTool.ps1 (es. GitHub raw).'] = 'Address of the online folder with version.txt and MultiTool.ps1 (e.g. GitHub raw).'
+$TrEn['Lascia vuoto per usare GitHub (Erodyne/MultiTool), oppure indica un''altra cartella online con version.txt e MultiTool.ps1.'] = 'Leave empty to use GitHub (Erodyne/MultiTool), or enter another online folder with version.txt and MultiTool.ps1.'
 $TrEn['Installa in questo PC'] = 'Install on this PC'
 $TrEn['Installer locali'] = 'Local installers'
 $TrEn['Installer locali, profili di installazione, cronologia, log e backup dei driver.'] = 'Local installers, install profiles, history, logs and driver backups.'
@@ -1986,6 +1988,7 @@ $TrEn['Ricerca aggiornamenti di Windows…'] = 'Searching for Windows updates…
 $TrEn['Ricerca di nuovo'] = 'Search again'
 $TrEn['Ricontrolla'] = 'Check again'
 $TrEn['Riduci nell''area di notifica'] = 'Minimize to tray'
+$TrEn['Aggiorna MultiTool automaticamente'] = 'Update MultiTool automatically'
 $TrEn['Prepara tutte le sezioni all''avvio'] = 'Prepare all sections at startup'
 $TrEn['Riparazione'] = 'Repair'
 $TrEn['Ripristina driver da backup'] = 'Restore drivers from backup'
@@ -3475,15 +3478,15 @@ try {
     $sync.UpdChecked = $true
 } catch { $sync.NewVersion = ''; $sync.UpdChecked = $true; $sync.UpdError = $_.Exception.Message }
 '@
+function Get-UpdUrl { if ($Settings.UpdateUrl) { $Settings.UpdateUrl.TrimEnd('/') } else { $DefaultUpdateUrl } }
 function Start-UpdCheck {
-    if (-not $Settings.UpdateUrl) { $ui.SetUpdInfo.Text = "Versione installata: $AppVersion  ·  nessun indirizzo di aggiornamento impostato"; return }
     $sync.UpdChecked = $false; $sync.UpdError = $null
     $ui.SetUpdInfo.Text = "Versione installata: $AppVersion  ·  controllo in corso…"
-    Start-Bg $UpdCode @{ url = $Settings.UpdateUrl; cur = $AppVersion }
+    Start-Bg $UpdCode @{ url = (Get-UpdUrl); cur = $AppVersion }
 }
 function Install-SelfUpdate {
     try {
-        $u = $Settings.UpdateUrl.TrimEnd('/')
+        $u = Get-UpdUrl
         $tmp = Join-Path $env:TEMP 'MultiTool-new.ps1'
         Invoke-WebRequest "$u/MultiTool.ps1" -OutFile $tmp -UseBasicParsing -TimeoutSec 60
         $errs = $null; $tok = $null
@@ -3491,6 +3494,7 @@ function Install-SelfUpdate {
         if ($errs.Count -or -not (Select-String -Path $tmp -Pattern '\$AppVersion' -Quiet)) { throw 'il file scaricato non è valido' }
         Copy-Item $ScriptPath (Join-Path $DataDir "backup-MultiTool-$AppVersion.ps1") -Force
         Copy-Item $tmp $ScriptPath -Force
+        Add-History 'MultiTool' "Aggiornato da $AppVersion" 'Completato' 'ok'
         Restart-App
     } catch { Toast "Aggiornamento non riuscito: $($_.Exception.Message)" }
 }
@@ -3531,7 +3535,7 @@ try {
 function Start-CountCheck { $sync.UpdCount = $null; Start-Bg $CountCode @{} }
 $bgTimer = New-Object Windows.Threading.DispatcherTimer
 $bgTimer.Interval = [TimeSpan]::FromHours(6)
-$bgTimer.Add_Tick({ if ($sync.Phase -ne 'run') { Start-CountCheck } })
+$bgTimer.Add_Tick({ if ($sync.Phase -ne 'run') { Start-CountCheck; Start-UpdCheck } })
 $bgTimer.Start()
 
 # --- Azioni speciali ---
@@ -3773,6 +3777,8 @@ $ui.SetPrefetch.Add_Click({
     if ($Settings.Prefetch) { Start-Prefetch } else { $sync.PrefetchGen = [int]$sync.PrefetchGen + 1; $ui.PrefInfo.Text = '' }
 })
 $ui.SetUpdUrl.Text = [string]$Settings.UpdateUrl
+$ui.SetSelfUpd.IsChecked = [bool]$Settings.AutoSelfUpdate
+$ui.SetSelfUpd.Add_Click({ $Settings.AutoSelfUpdate = [bool]$ui.SetSelfUpd.IsChecked; Save-Json 'settings.json' $Settings })
 $ui.SetLight.Add_Click({
     $Settings.Theme = if ($ui.SetLight.IsChecked) { 'light' } else { 'dark' }
     Save-Json 'settings.json' $Settings
@@ -3829,6 +3835,14 @@ $timer.Add_Tick({
         } elseif ($ui.Toast.Visibility -eq 'Visible') { $ui.Toast.Visibility = 'Collapsed' }
     }
 
+    # Auto-aggiornamento: applica appena il programma è libero
+    if ($State.PendingSelfUpdate -and $sync.Phase -in 'idle', 'review' -and -not $State.SelfUpdating -and ($ui.ViewHome.Visibility -eq 'Visible' -or -not $win.IsVisible)) {
+        $State.SelfUpdating = $true
+        Toast "Aggiorno MultiTool alla versione $($State.PendingSelfUpdate)…"
+        $State.SelfUpdAt = (Get-Date).AddSeconds(3)
+    }
+    if ($State.SelfUpdating -and $State.SelfUpdAt -and (Get-Date) -gt $State.SelfUpdAt) { $State.SelfUpdAt = $null; Install-SelfUpdate; $State.SelfUpdating = $false; $State.PendingSelfUpdate = $null }
+
     # Conteggio aggiornamenti in background
     if ($null -ne $sync.UpdCount) {
         $n = $sync.UpdCount; $sync.UpdCount = $null
@@ -3845,7 +3859,8 @@ $timer.Add_Tick({
         elseif ($sync.NewVersion) {
             $ui.SetUpdInfo.Text = "Versione installata: $AppVersion  ·  disponibile la $($sync.NewVersion)"
             $ui.SetUpdGo.Visibility = 'Visible'
-            Toast "È disponibile MultiTool $($sync.NewVersion): vai in Impostazioni per aggiornare"
+            if ($Settings.AutoSelfUpdate) { $State.PendingSelfUpdate = $sync.NewVersion }
+            else { Toast "È disponibile MultiTool $($sync.NewVersion): vai in Impostazioni per aggiornare" }
         } else { $ui.SetUpdInfo.Text = "Versione installata: $AppVersion  ·  è la più recente" }
     }
 

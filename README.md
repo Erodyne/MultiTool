@@ -46,6 +46,10 @@ build/               launcher C#, script NSIS dell'installer e immagini
 .github/workflows/   compilazione automatica di installer e zip
 ```
 
+## Aggiornamento automatico
+
+MultiTool controlla `version.txt` su questo repository all'avvio e ogni 6 ore. Se trova una versione più recente scarica `MultiTool.ps1`, ne verifica la sintassi, salva una copia di sicurezza della versione attuale in `Dati` e si riavvia aggiornato (quando è in Home o ridotto a icona, mai durante un'operazione). Si può disattivare in *Impostazioni → Aggiornamenti di MultiTool*.
+
 ## Pubblicare una nuova versione
 
 1. Aggiorna `$AppVersion` in `MultiTool.ps1` e lo stesso numero in `version.txt` (formato `AAAA.MM.GG.N`).
