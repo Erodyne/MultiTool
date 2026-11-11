@@ -70,3 +70,9 @@ MultiTool usa strumenti e servizi di terze parti, mai inclusi nel pacchetto ma s
 - [Cloudflare Speed Test](https://speed.cloudflare.com) e [ipify](https://www.ipify.org) per la sezione Rete
 - [qrcodejs](https://github.com/davidshimjs/qrcodejs) e [Chart.js](https://www.chartjs.org) nei rapporti HTML
 - Installer creato con [NSIS](https://nsis.sourceforge.io)
+
+## Note legali
+
+MultiTool è fornito «così com'è», senza garanzie: modifica impostazioni di sistema, installa e rimuove software e driver. Esegui un backup prima di usarlo. MultiTool non raccoglie dati personali. Testo completo in [CONDIZIONI.md](CONDIZIONI.md) e nel programma (*Informazioni e note legali*).
+
+© 2026 Erodyne. Tutti i diritti riservati. Uso gratuito consentito; vietate rivendita e redistribuzione di versioni modificate senza autorizzazione.

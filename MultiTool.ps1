@@ -3,7 +3,10 @@
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.11.4'
+$AppVersion = '2026.11.11.5'
+$AppAuthor  = 'Erodyne'
+$AppRepo    = 'https://github.com/Erodyne/MultiTool'
+$TermsVersion = '1'
 $DefaultUpdateUrl = ''
 $ScriptPath = $PSCommandPath
 $Root    = Split-Path -Parent $ScriptPath
@@ -195,7 +198,7 @@ function Get-Settings {
     $def = @{ Restore = $true; AutoEnabled = $false; AutoDay = 'Sunday'; AutoTime = '12:00'; Theme = 'dark'; Tray = $true; UpdateUrl = 'https://raw.githubusercontent.com/Erodyne/MultiTool/main'
               WinL = $null; WinT = $null; WinW = $null; WinH = $null; WinMax = $false; Lhm = $false
               ShopName = ''; ShopPhone = ''; ShopEmail = ''; ShopWeb = ''; ShopLogo = ''; WarrantyMonths = 24
-              BackupDest = ''; LastBackup = ''; BackupAuto = $false; BackupTime = '13:00'; SensLog = $false; Lang = 'it'; Prefetch = $true; AutoSelfUpdate = $true }
+              BackupDest = ''; LastBackup = ''; BackupAuto = $false; BackupTime = '13:00'; SensLog = $false; Lang = 'it'; Prefetch = $true; AutoSelfUpdate = $true; TermsAccepted = '' }
     foreach ($k in $def.Keys) { if (-not ($s.PSObject.Properties.Name -contains $k)) { $s | Add-Member -NotePropertyName $k -NotePropertyValue $def[$k] -Force } }
     $s
 }
@@ -922,6 +925,31 @@ public class MtItem : INotifyPropertyChanged {
 }
 '@
 
+
+# ============================================================
+#  Informazioni e note legali
+# ============================================================
+$Legal = @(
+    @{ T = 'Condizioni d''uso ed esclusione di garanzia'; B = @(
+        'MultiTool è fornito «così com''è», senza garanzie di alcun tipo, esplicite o implicite, comprese quelle di funzionamento senza errori, di idoneità a uno scopo particolare e di compatibilità con uno specifico computer.'
+        'Il programma modifica impostazioni di Windows e del registro di sistema, installa, aggiorna e rimuove programmi, app e driver, elimina file temporanei e può riavviare il computer. Prima di usarlo esegui un backup dei tuoi dati. Le operazioni vengono avviate solo dopo la tua conferma e, se l''opzione è attiva, dopo la creazione di un punto di ripristino.'
+        'Nei limiti massimi consentiti dalla legge, l''autore non è responsabile di danni diretti o indiretti, perdita di dati, malfunzionamenti, interruzioni di attività o mancati guadagni derivanti dall''uso o dall''impossibilità di usare il programma. Restano salvi i casi di dolo o colpa grave (art. 1229 c.c.) e i diritti che la legge riconosce ai consumatori e che non possono essere esclusi.'
+        'Chi usa MultiTool su computer di terzi (ad esempio clienti) è responsabile di avere il loro consenso e di informarli delle operazioni eseguite.') }
+    @{ T = 'Privacy'; B = @(
+        'MultiTool non raccoglie, non registra e non invia all''autore alcun dato personale o informazione sul computer. Inventario hardware, cronologia, log, rapporti e impostazioni restano esclusivamente sul PC, nella cartella Dati.'
+        'Per funzionare il programma si collega a servizi esterni, che hanno proprie informative: GitHub (aggiornamenti di MultiTool), Microsoft (winget, Microsoft Store, Windows Update, Catalogo Microsoft Update), Cloudflare e ipify (test di velocità e IP pubblico, solo quando li avvii), cdnjs e jsDelivr (grafici e codici QR nei rapporti HTML).') }
+    @{ T = 'Software di terze parti e marchi'; B = @(
+        'MultiTool non include software di terze parti. Gli strumenti facoltativi (ad esempio LibreHardwareMonitor, licenza MPL-2.0, e il driver PawnIO) vengono scaricati dai canali ufficiali tramite winget solo dopo la tua conferma e sono regolati dalle rispettive licenze. I programmi installati con winget o dalle cartelle Installers e Profili sono soggetti alle licenze dei loro autori, che accetti al momento dell''installazione.'
+        'Windows, Microsoft Store, Microsoft Defender e winget sono marchi di Microsoft Corporation. Intel, NVIDIA, AMD e gli altri nomi di prodotti e aziende citati sono marchi dei rispettivi titolari. MultiTool è un progetto indipendente, non affiliato né approvato da questi soggetti.') }
+    @{ T = 'Licenza'; B = @(
+        "© $((Get-Date).Year) $AppAuthor. Tutti i diritti riservati."
+        'L''uso del programma è gratuito, anche in ambito professionale. Non è consentito vendere, ridistribuire versioni modificate o presentare il programma come proprio senza l''autorizzazione scritta dell''autore.') }
+)
+function Get-AppDate {
+    $p = $AppVersion -split '\.'
+    try { return [datetime]::new([int]$p[0], [int]$p[1], [int]$p[2]) } catch { return $null }
+}
+
 # ============================================================
 #  UI (XAML)
 # ============================================================
@@ -1264,6 +1292,7 @@ $xaml = @'
         <Grid.RowDefinitions>
           <RowDefinition Height="48"/>
           <RowDefinition Height="*"/>
+          <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="240"/>
@@ -1287,6 +1316,17 @@ $xaml = @'
             <Button x:Name="BtnClose" Style="{StaticResource TitleBtn}" Content="&#xE8BB;" Margin="0,0,6,0"/>
           </StackPanel>
         </Grid>
+
+        <!-- Piè di pagina -->
+        <Border Grid.Row="2" Grid.ColumnSpan="2" BorderBrush="#1C2130" BorderThickness="0,1,0,0" Padding="22,6,22,8">
+          <Grid>
+            <TextBlock x:Name="FootBar" Foreground="#5C6278" FontSize="11.5" VerticalAlignment="Center"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+              <Button x:Name="FootGit" Style="{StaticResource LinkBtn}" Content="GitHub" FontSize="11.5" Padding="8,2"/>
+              <Button x:Name="FootAbout" Style="{StaticResource LinkBtn}" Content="Informazioni e note legali" FontSize="11.5" Padding="8,2" Foreground="#A78BFA"/>
+            </StackPanel>
+          </Grid>
+        </Border>
 
         <!-- Sidebar -->
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
@@ -1636,6 +1676,30 @@ $xaml = @'
             </ScrollViewer>
           </Grid>
 
+          <!-- ===================== INFORMAZIONI ===================== -->
+          <ScrollViewer x:Name="ViewAbout" Grid.Row="1" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="0,10,0,10" MaxWidth="900" HorizontalAlignment="Left">
+              <StackPanel Orientation="Horizontal">
+                <Image x:Name="AboutLogo" Width="72" Height="72"/>
+                <StackPanel Margin="18,0,0,0" VerticalAlignment="Center">
+                  <TextBlock Text="MultiTool" FontSize="32" FontWeight="Bold" Foreground="{StaticResource Accent}"/>
+                  <TextBlock x:Name="AboutVer" Foreground="#9AA0B8" FontSize="14"/>
+                </StackPanel>
+              </StackPanel>
+              <Border x:Name="AboutAcceptBox" Style="{StaticResource Card}" Margin="0,20,0,0" BorderBrush="#7C5CFF" Visibility="Collapsed">
+                <StackPanel>
+                  <TextBlock Text="Prima di iniziare" FontSize="18" FontWeight="SemiBold"/>
+                  <TextBlock Text="Leggi le condizioni d'uso qui sotto. MultiTool modifica impostazioni di sistema, installa e rimuove programmi: per usarlo devi accettarle." Foreground="#9AA0B8" TextWrapping="Wrap" Margin="0,6,0,14"/>
+                  <StackPanel Orientation="Horizontal">
+                    <Button x:Name="AboutAccept" Style="{StaticResource AccentBtn}" Content="Accetto" MinWidth="140" Margin="0,0,10,0"/>
+                    <Button x:Name="AboutDecline" Style="{StaticResource GhostBtn}" Content="Non accetto ed esco" MinWidth="160"/>
+                  </StackPanel>
+                </StackPanel>
+              </Border>
+              <StackPanel x:Name="AboutBody" Margin="0,10,0,0"/>
+            </StackPanel>
+          </ScrollViewer>
+
           <!-- ===================== LOG ===================== -->
           <Grid x:Name="ViewLogs" Grid.Row="1" Visibility="Collapsed">
             <Grid.RowDefinitions>
@@ -1817,6 +1881,7 @@ $xaml = @'
                       <Button x:Name="SetOpenProf" Style="{StaticResource GhostBtn}" Content="Profili" Padding="16,8" FontSize="13" Margin="0,0,8,8"/>
                       <Button x:Name="SetOpenData" Style="{StaticResource GhostBtn}" Content="Dati e log" Padding="16,8" FontSize="13" Margin="0,0,8,8"/>
                       <Button x:Name="SetOpenRep" Style="{StaticResource GhostBtn}" Content="Rapporti" Padding="16,8" FontSize="13" Margin="0,0,8,8"/>
+                      <Button x:Name="SetAbout" Style="{StaticResource GhostBtn}" Content="Informazioni e note legali" Padding="16,8" FontSize="13" Margin="0,0,8,8"/>
                     </WrapPanel>
                   </StackPanel>
                 </Border>
@@ -3026,7 +3091,7 @@ if ($Settings.Lang -eq 'en') {
 #  Motore UI
 # ============================================================
 function Show-View([string]$v) {
-    foreach ($n in 'ViewHome', 'ViewList', 'ViewSettings', 'ViewLogs', 'ViewHw') { $ui[$n].Visibility = 'Collapsed' }
+    foreach ($n in 'ViewHome', 'ViewList', 'ViewSettings', 'ViewLogs', 'ViewHw', 'ViewAbout') { $ui[$n].Visibility = 'Collapsed' }
     if ($v -ne 'ViewHw') { $sync.SensOn = $false }
     $el = $ui[$v]; $el.Visibility = 'Visible'
     $tt = New-Object Windows.Media.TranslateTransform 0, 12
@@ -3650,6 +3715,39 @@ $ui.RebootGo.Add_Click({
     }
 })
 
+
+# --- Informazioni / condizioni ---
+function Show-About([bool]$MustAccept) {
+    Stop-AnyScan
+    $ui.AboutAcceptBox.Visibility = Vis $MustAccept
+    $ui.NavPanel.IsEnabled = -not $MustAccept
+    foreach ($c in $ui.NavPanel.Children) { if ($c -is [Windows.Controls.RadioButton]) { $c.IsChecked = $false } }
+    Show-View 'ViewAbout'
+}
+$d = Get-AppDate
+$ui.AboutVer.Text = "Versione $AppVersion" + $(if ($d) { "  ·  rilasciata il $($d.ToString('dd/MM/yyyy'))" } else { '' }) + "  ·  creato da $AppAuthor"
+$ui.FootBar.Text = "MultiTool $AppVersion" + $(if ($d) { "  ·  $($d.ToString('dd/MM/yyyy'))" } else { '' }) + "  ·  creato da $AppAuthor  ·  © $((Get-Date).Year)"
+if (Test-Path $IcoPath) { try { $ui.AboutLogo.Source = [Windows.Media.Imaging.BitmapFrame]::Create([uri](Join-Path $Root 'MultiTool-512.png')) } catch {} }
+$secTpl = @'
+<StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Margin="0,18,0,0">
+  <TextBlock Text="{0}" FontSize="17" FontWeight="SemiBold" Foreground="#E8EAF2" Margin="0,0,0,6"/>
+  {1}
+</StackPanel>
+'@
+foreach ($sec in $Legal) {
+    $paras = ($sec.B | ForEach-Object { "<TextBlock Text=`"$([Security.SecurityElement]::Escape($_))`" Foreground=`"#9AA0B8`" FontSize=`"13.5`" TextWrapping=`"Wrap`" LineHeight=`"21`" Margin=`"0,4,0,4`"/>" }) -join ''
+    [void]$ui.AboutBody.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($secTpl -f [Security.SecurityElement]::Escape($sec.T), $paras))))
+}
+$ui.FootAbout.Add_Click({ Show-About $false })
+$ui.SetAbout.Add_Click({ Show-About $false })
+$ui.FootGit.Add_Click({ Start-Process $AppRepo })
+$ui.AboutAccept.Add_Click({
+    $Settings.TermsAccepted = $TermsVersion; Save-Json 'settings.json' $Settings
+    $ui.AboutAcceptBox.Visibility = 'Collapsed'; $ui.NavPanel.IsEnabled = $true
+    Go-Home; Start-Prefetch
+})
+$ui.AboutDecline.Add_Click({ $State.ForceClose = $true; $win.Close() })
+
 # --- Impostazioni ---
 $days = 'SetD1', 'SetD2', 'SetD3', 'SetD4', 'SetD5', 'SetD6', 'SetD7'
 $ui.SetRestore.IsChecked = [bool]$Settings.Restore
@@ -4118,7 +4216,6 @@ if ($Settings.SensLog) { Start-Sensors }
 Start-CountCheck
 Start-UpdCheck
 Update-AutoInfo
-Show-View 'ViewHome'
-Start-Prefetch
+if ($Settings.TermsAccepted -ne $TermsVersion) { Show-About $true } else { Show-View 'ViewHome'; Start-Prefetch }
 Refresh-Info
 [void]$win.ShowDialog()

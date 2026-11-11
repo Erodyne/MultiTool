@@ -40,6 +40,8 @@ VIAddVersionKey /LANG=1040 "LegalCopyright" "MultiTool"
 !define MUI_FINISHPAGE_RUN_TEXT "Avvia MultiTool"
 
 !insertmacro MUI_PAGE_WELCOME
+!define MUI_LICENSEPAGE_TEXT_TOP "Leggi le condizioni d'uso di MultiTool."
+!insertmacro MUI_PAGE_LICENSE "condizioni.txt"
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
