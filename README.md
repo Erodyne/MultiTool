@@ -53,10 +53,11 @@ MultiTool controlla `version.txt` su questo repository all'avvio e ogni 6 ore. S
 ## Pubblicare una nuova versione
 
 1. Aggiorna `$AppVersion` in `MultiTool.ps1` e lo stesso numero in `version.txt` (formato `AAAA.MM.GG.N`).
-2. Fai commit e push su `main`: i PC con MultiTool installato vedranno l'aggiornamento in *Impostazioni*.
-3. Crea un tag, ad esempio `v2026.11.11.3`, e fai push del tag: GitHub Actions compila `MultiTool.exe`, l'installer e lo zip e li pubblica in **Releases**.
+2. Fai commit e push su `main`.
+   - I PC con MultiTool si aggiornano da soli.
+   - GitHub Actions compila `MultiTool.exe`, l'installer e lo zip portatile e pubblica la release `v<versione>` in **Releases**.
 
-Puoi anche avviare la compilazione a mano da **Actions → Build e release → Run workflow** (i file restano scaricabili come *artifact*).
+Puoi anche avviare la compilazione a mano da **Actions → Build e release → Run workflow**.
 
 ## Crediti
 
