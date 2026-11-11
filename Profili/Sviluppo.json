@@ -1,0 +1,12 @@
+{
+  "name": "Sviluppo",
+  "description": "Editor, Git, Python e Node.js",
+  "winget": [
+    "Microsoft.VisualStudioCode",
+    "Git.Git",
+    "Python.Python.3.12",
+    "OpenJS.NodeJS.LTS",
+    "Microsoft.WindowsTerminal"
+  ],
+  "local": []
+}

@@ -1,0 +1,9 @@
+# File generati
+dist/
+MultiTool.exe
+*.log
+
+# Dati locali creati dal programma
+Dati/
+Installers/*
+!Installers/.gitkeep

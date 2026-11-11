@@ -1,0 +1,10 @@
+{
+  "name": "Gaming",
+  "description": "Launcher e chat per giocare",
+  "winget": [
+    "Valve.Steam",
+    "EpicGames.EpicGamesLauncher",
+    "Discord.Discord"
+  ],
+  "local": []
+}

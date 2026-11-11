@@ -1,0 +1,11 @@
+{
+  "name": "Ufficio",
+  "description": "Suite da ufficio e videochiamate",
+  "winget": [
+    "TheDocumentFoundation.LibreOffice",
+    "Zoom.Zoom",
+    "Microsoft.Teams",
+    "Mozilla.Thunderbird"
+  ],
+  "local": []
+}

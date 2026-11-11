@@ -1,0 +1,74 @@
+name: Build e release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Leggi e verifica la versione
+        id: v
+        shell: pwsh
+        run: |
+          $v = (Get-Content version.txt -Raw).Trim()
+          if (-not (Select-String -Path MultiTool.ps1 -Pattern "\`$AppVersion = '$([regex]::Escape($v))'" -Quiet)) {
+            throw "version.txt ($v) non coincide con `$AppVersion in MultiTool.ps1"
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Controlla la sintassi di MultiTool.ps1
+        shell: pwsh
+        run: |
+          $e = $null; $t = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\MultiTool.ps1", [ref]$t, [ref]$e)
+          if ($e.Count) { $e | ForEach-Object { Write-Error "Riga $($_.Extent.StartLineNumber): $($_.Message)" }; exit 1 }
+
+      - name: Compila MultiTool.exe
+        shell: pwsh
+        run: |
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ `
+            /out:MultiTool.exe /win32icon:MultiTool.ico build\Launcher.cs
+          if (-not (Test-Path MultiTool.exe)) { throw 'Compilazione non riuscita' }
+
+      - name: Installa NSIS
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) { choco install nsis -y --no-progress }
+
+      - name: Crea l'installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist -Force | Out-Null
+          Push-Location build
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" /V2 "/DVERSION=${{ steps.v.outputs.version }}" setup.nsi
+          if ($LASTEXITCODE) { throw 'makensis non riuscito' }
+          Pop-Location
+
+      - name: Crea il pacchetto portatile
+        shell: pwsh
+        run: |
+          $tmp = New-Item -ItemType Directory "$env:RUNNER_TEMP\MultiTool" -Force
+          Copy-Item MultiTool.ps1, MultiTool.exe, MultiTool.ico, MultiTool-512.png, Avvia.vbs -Destination $tmp
+          Copy-Item Profili, Strumenti, Installers -Destination $tmp -Recurse
+          Compress-Archive -Path $tmp -DestinationPath "dist\MultiTool-portatile-${{ steps.v.outputs.version }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MultiTool-${{ steps.v.outputs.version }}
+          path: dist/*
+
+      - name: Pubblica la release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: MultiTool ${{ steps.v.outputs.version }}
+          files: dist/*
+          generate_release_notes: true

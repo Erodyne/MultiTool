@@ -1,0 +1,13 @@
+{
+  "name": "PC nuovo",
+  "description": "Browser, archivi, multimedia e PDF",
+  "winget": [
+    "Mozilla.Firefox",
+    "Google.Chrome",
+    "7zip.7zip",
+    "VideoLAN.VLC",
+    "Notepad++.Notepad++",
+    "Adobe.Acrobat.Reader.64-bit"
+  ],
+  "local": []
+}
