@@ -32,6 +32,22 @@ jobs:
           [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\MultiTool.ps1", [ref]$t, [ref]$e)
           if ($e.Count) { $e | ForEach-Object { Write-Error "Riga $($_.Extent.StartLineNumber): $($_.Message)" }; exit 1 }
 
+      - name: Prova tipi C# e interfaccia (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          $src = Get-Content MultiTool.ps1 -Raw -Encoding UTF8
+          Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml
+          $cs = [regex]::Match($src, "(?s)\`$MtCs = @'\r?\n(.*?)\r?\n'@").Groups[1].Value
+          $refs = @([Windows.MessageBox].Assembly.Location, [Windows.DependencyObject].Assembly.Location, [Windows.UIElement].Assembly.Location,
+                    [System.Xaml.XamlSchemaContext].Assembly.Location, [System.ComponentModel.INotifyPropertyChanged].Assembly.Location)
+          Add-Type -TypeDefinition $cs -ReferencedAssemblies $refs
+          $tab = [regex]::Match($src, "(?s)\`$TrTable = @'\r?\n(.*?)\r?\n'@").Groups[1].Value
+          [MtTr]::Load($tab); [MtTr]::On = $true
+          "Voci di traduzione: $([MtTr]::Count)  ·  prova: $([MtTr]::T('Trovati 3 aggiornamenti. Controlla l''elenco, poi scegli se procedere.'))"
+          $xaml = [regex]::Match($src, "(?s)\`$xaml = @'\r?\n(.*?)\r?\n'@").Groups[1].Value
+          $w = [Windows.Markup.XamlReader]::Parse($xaml)
+          "XAML caricato: $($w.GetType().Name)"
+
       - name: Compila MultiTool.exe
         shell: pwsh
         run: |
