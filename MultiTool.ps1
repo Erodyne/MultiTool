@@ -3,12 +3,13 @@
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.13.5'
+$AppVersion = '2026.11.13.6'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
 $DefaultUpdateUrl = 'https://raw.githubusercontent.com/Erodyne/MultiTool/main'
 $ScriptPath = $PSCommandPath
+$PsExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $Root    = Split-Path -Parent $ScriptPath
 $Installed = $Root -like "$env:ProgramFiles*"
 $Base    = if ($Installed) { Join-Path $env:ProgramData 'MultiTool' } else { $Root }
@@ -23,7 +24,7 @@ $CliMode = if ($Manutenzione) { 'full' } elseif ($Aggiorna) { 'upd' } elseif ($P
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $Auto -and -not $Backup -and -not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     $extra = if ($Uninstall) { ' -Uninstall' } elseif ($CliMode) { ' -' + @{ full = 'Manutenzione'; upd = 'Aggiorna'; clean = 'Pulizia' }[$CliMode] } elseif ($Hidden) { ' -Hidden' } else { '' }
-    Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`"" + $extra)
+    Start-Process $PsExe -Verb RunAs -WindowStyle Hidden -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`"" + $extra)
     exit
 }
 if ($CliMode) { $Auto = [switch]$true }
@@ -99,8 +100,13 @@ function Get-Cut([string]$l, [int]$a, [int]$b) {
     return $l.Substring($a, $b - $a).Trim()
 }
 
-function ConvertFrom-WingetTable([string]$Text) {
+function ConvertFrom-WingetTable([string]$Text, [switch]$FirstOnly) {
     $lines = $Text -split "`n" | ForEach-Object { ($_ -split "`r")[-1].TrimEnd() }
+    if ($FirstOnly) {
+        $stop = -1; $seen = $false
+        for ($q = 0; $q -lt $lines.Count; $q++) { if ($lines[$q] -match '^-{20,}$') { if ($seen) { $stop = $q - 2; break }; $seen = $true } }
+        if ($stop -gt 0) { $lines = $lines[0..$stop] }
+    }
     for ($i = 1; $i -lt $lines.Count; $i++) {
         if ($lines[$i] -notmatch '^-{20,}$') { continue }
         $cols = @([regex]::Matches($lines[$i - 1], '\S+') | ForEach-Object { $_.Index })
@@ -119,8 +125,13 @@ function ConvertFrom-WingetTable([string]$Text) {
     }
 }
 
-function Invoke-Winget([string]$Verb, [string]$Id, [string]$Source, $It) {
+function Invoke-Winget([string]$Verb, [string]$Id, [string]$Source, $It, [switch]$NoScope, [switch]$Scoped) {
+    if ($Verb -eq 'install' -and -not $NoScope -and -not $Scoped -and (Get-UserCtx).Other -and $Source -ne 'msstore') {
+        $r0 = Invoke-Winget $Verb $Id $Source $It -NoScope -Scoped
+        if ($r0.Code -ne -1978335216) { return $r0 }
+    }
     $a = "$Verb --id `"$Id`" --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity"
+    if ($Scoped) { $a += ' --scope machine' }
     if ($Verb -eq 'upgrade') { $a += ' --include-unknown' }
     if ($Source) { $a += " --source $Source" }
     if (-not $It) { return Invoke-Hidden (Get-WingetPath) $a }
@@ -205,6 +216,7 @@ function New-Row([hashtable]$p) {
     $d = @{ Name = ''; Sub = ''; C1 = ''; C2 = ''; Tag = ''; TagKind = 'none'; Key = ''; Data = $null
             Selected = $false; Checkable = $true; Status = ''; StatusKind = 'none'; Arrow = $false; Glyph = '' }
     foreach ($k in $p.Keys) { if ($null -ne $p[$k]) { $d[$k] = $p[$k] } }
+    if ($d.ContainsKey('RawName')) { $d.Remove('Name') }
     $d
 }
 
@@ -358,12 +370,13 @@ function Test-Metered {
     } catch { $false }
 }
 function Test-OnBattery { [bool]@(Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue | Where-Object { $_.BatteryStatus -eq 1 }).Count }
-function Get-RealUptimeDays {
+function Get-RealBootTime {
     $t = $null
     try { $t = (Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Boot'; Id = 27 } -MaxEvents 1 -ErrorAction Stop).TimeCreated } catch {}
     try { $lb = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime; if (-not $t -or $lb -gt $t) { $t = $lb } } catch {}
-    if ($t) { [int]((Get-Date) - $t).TotalDays } else { 0 }
+    if ($t) { $t } else { Get-Date }
 }
+function Get-RealUptimeDays { [int]((Get-Date) - (Get-RealBootTime)).TotalDays }
 function Get-SfcResult([datetime]$Since) {
     $log = "$env:SystemRoot\Logs\CBS\CBS.log"
     $lines = @(); try { $lines = @(Get-Content $log -Tail 20000 -ErrorAction Stop | Where-Object { $_ -match '\[SR\]' }) } catch {}
@@ -822,7 +835,7 @@ function Invoke-MaintStep($it) {
             $it.Sub = 'Cerco aggiornamenti…'
             Start-StoreScan
             $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity' 300
-            $list = @(ConvertFrom-WingetTable $r.Out | Where-Object { $_.Cols.Count -ge 4 -and $excl -notcontains $_.Cols[1] -and $_.Cols[1] -notmatch '…$' -and -not (Test-SkippedVer $_.Cols) } |
+            $list = @(ConvertFrom-WingetTable $r.Out -FirstOnly | Where-Object { $_.Cols.Count -ge 4 -and $excl -notcontains $_.Cols[1] -and $_.Cols[1] -notmatch '…$' -and -not (Test-SkippedVer $_.Cols) } |
                       Sort-Object { $_.Cols[1] -eq 'Microsoft.AppInstaller' })
             $ok = 0; $err = 0; $i = 0; $skp = 0
             foreach ($t in $list) {
@@ -1340,6 +1353,7 @@ public class MtItem : INotifyPropertyChanged {
     public bool   Checkable  { get { return (bool)G("Checkable", true); }   set { S("Checkable", value); } }
     public bool   Arrow      { get { return (bool)G("Arrow", false); }      set { S("Arrow", value); } }
     public string Name       { get { return (string)G("Name", ""); }        set { S("Name", MtTr.T(value)); } }
+    public string RawName    { get { return (string)G("Name", ""); }        set { S("Name", value); } }
     public string Sub        { get { return (string)G("Sub", ""); }         set { S("Sub", MtTr.T(value)); } }
     public string C1         { get { return (string)G("C1", ""); }          set { S("C1", MtTr.T(value)); } }
     public string C2         { get { return (string)G("C2", ""); }          set { S("C2", MtTr.T(value)); } }
@@ -2402,6 +2416,23 @@ Preparo lo storico dei sensori… ⇒ Preparing the sensor history…
 file mancante ⇒ missing file
 non modificato da 1 anno ⇒ not modified for 1 year
 File non valido: {0} ⇒ Invalid file: {0}
+a rischio ⇒ at risk
+n.d. ⇒ n/a
+Compatibilità Windows 11… ⇒ Windows 11 compatibility…
+Licenza di Windows… ⇒ Windows license…
+mai ⇒ never
+parametri: {0} ⇒ arguments: {0}
+5-15 minuti ⇒ 5-15 minutes
+10-20 minuti ⇒ 10-20 minutes
+DISM {0} ⇒ DISM {0}
+SFC {0} ⇒ SFC {0}
+Temperatura GPU ⇒ GPU temperature
+Ventola GPU ⇒ GPU fan
+Carico GPU ⇒ GPU load
+Frequenza GPU ⇒ GPU clock
+Consumo GPU ⇒ GPU power
+Assistenza ⇒ Get Help
+capacità {0}% rispetto al nuovo ⇒ capacity {0}% of new
 '@
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml
 if (-not ('MtTr' -as [type])) {
@@ -2475,7 +2506,7 @@ if ($Auto) {
     $ok = 0; $err = 0
     try {
         $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity' 300
-        foreach ($t in @(ConvertFrom-WingetTable $r.Out | Sort-Object { $_.Cols[1] -eq 'Microsoft.AppInstaller' })) {
+        foreach ($t in @(ConvertFrom-WingetTable $r.Out -FirstOnly | Sort-Object { $_.Cols[1] -eq 'Microsoft.AppInstaller' })) {
             $c = $t.Cols
             if ($c.Count -lt 4 -or $excl -contains $c[1] -or $c[1] -match '…$' -or (Test-SkippedVer $c)) { continue }
             $src = if ($c.Count -ge 5) { $c[4] } else { '' }
@@ -3920,14 +3951,14 @@ $sync.Status = 'Avvio la scansione del Microsoft Store…'
 Start-StoreScan
 $sync.Status = 'Interrogo winget, attendi qualche secondo…'
 $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity' 300
-foreach ($t in ConvertFrom-WingetTable $r.Out) {
+foreach ($t in ConvertFrom-WingetTable $r.Out -FirstOnly) {
     $c = $t.Cols
     if ($c.Count -lt 4) { continue }
     $src = if ($c.Count -ge 5) { $c[4] } else { '' }
     $ex  = $excl -contains $c[1]
     $sv  = $skv -and $skv.($c[1]) -and $skv.($c[1]) -eq $c[3]
     $cut = $c[1] -match '…$'
-    $rows.Add((New-Row @{ Name = $c[0]; Sub = $c[1]; Key = $c[1]; C1 = $c[2]; C2 = $c[3]; Arrow = $true; Data = $src
+    $rows.Add((New-Row @{ RawName = $c[0]; Sub = $c[1]; Key = $c[1]; C1 = $c[2]; C2 = $c[3]; Arrow = $true; Data = $src
         Tag = $(if ($ex) { 'escluso' } elseif ($sv) { 'versione saltata' } else { $src }); TagKind = $(if ($ex -or $sv) { 'warn' } else { 'none' }); Selected = (-not $ex -and -not $cut -and -not $sv)
         Checkable = (-not $cut); Status = $(if ($cut) { 'ID troncato' } else { '' }); StatusKind = $(if ($cut) { 'skip' } else { 'none' }) }))
 }
@@ -4023,7 +4054,7 @@ foreach ($f in $files) {
     if ($rel) { $det += $rel }
     if ($hasArgs) { $det += 'parametri: ' + (Get-Content "$($f.FullName).args" -Raw).Trim() }
     $silentOk = $hasArgs -or ($f.Extension -match 'msi|appx|msix')
-    $rows.Add((New-Row @{ Name = $f.Name; Sub = ($det -join '  ·  '); Key = $f.FullName; C1 = $f.Extension.TrimStart('.').ToUpper()
+    $rows.Add((New-Row @{ RawName = $f.Name; Sub = ($det -join '  ·  '); Key = $f.FullName; C1 = $f.Extension.TrimStart('.').ToUpper()
         C2 = (Format-Size $f.Length); Tag = $(if ($silentOk) { 'silenziosa' } else { 'guidata' }); TagKind = $(if ($silentOk) { 'ok' } else { 'none' }) }))
 }
 $sync.ScanInfo = if ($rows.Count) { "$($rows.Count) installer nella cartella. Per gli .exe silenziosi crea un file nome.exe.args con i parametri." } else { $null }
@@ -4044,7 +4075,7 @@ foreach ($t in ConvertFrom-WingetTable $r.Out) {
     $c = $t.Cols
     $src = if ($c.Count -ge 4) { $c[-1] } else { '' }
     $cut = $c[1] -match '…$'
-    $rows.Add((New-Row @{ Name = $c[0]; Sub = $c[1]; Key = $c[1]; C1 = $c[2]; C2 = $(if ($c.Count -ge 5) { $c[3] } else { '' }); Tag = $src; Data = $src
+    $rows.Add((New-Row @{ RawName = $c[0]; Sub = $c[1]; Key = $c[1]; C1 = $c[2]; C2 = $(if ($c.Count -ge 5) { $c[3] } else { '' }); Tag = $src; Data = $src
         Checkable = (-not $cut); Status = $(if ($cut) { 'ID troncato' } else { '' }); StatusKind = $(if ($cut) { 'skip' } else { 'none' }) }))
 }
 $sync.ScanInfo = if ($rows.Count) { "$($rows.Count) risultati per `"$query`"." } else { $null }
@@ -4091,7 +4122,7 @@ foreach ($e in $list) {
     $msi = ($e.WindowsInstaller -eq 1) -and ($e.PSChildName -match '^\{.+\}$')
     $drvPkg = $e.DisplayName -match '^Windows Driver Package|^Pacchetto driver di Windows'
     $tag = if ($e.NoRemove -eq 1) { 'non rimovibile' } elseif ($drvPkg) { 'pacchetto driver' } elseif ($msi) { 'MSI' } elseif ($e.QuietUninstallString) { 'silenziosa' } else { 'guidata' }
-    $rows.Add((New-Row @{ Name = $e.DisplayName; Sub = [string]$e.Publisher; Key = $e.PSChildName; C1 = [string]$e.DisplayVersion; Checkable = ($e.NoRemove -ne 1)
+    $rows.Add((New-Row @{ RawName = $e.DisplayName; Sub = [string]$e.Publisher; Key = $e.PSChildName; C1 = [string]$e.DisplayVersion; Checkable = ($e.NoRemove -ne 1)
         TagKind = $(if ($drvPkg) { 'warn' } else { 'none' })
         C2 = $(if ($e.EstimatedSize) { Format-Size ([double]$e.EstimatedSize * 1KB) } else { '' }); Tag = $tag
         Data = @{ Msi = $msi; Quiet = [string]$e.QuietUninstallString; Cmd = [string]$e.UninstallString; Reg = [string]$e.PSPath; Name = [string]$e.DisplayName; Pub = [string]$e.Publisher; Loc = [string]$e.InstallLocation } }))
@@ -4152,7 +4183,7 @@ foreach ($d in $defs) {
         $cmdl = [Environment]::ExpandEnvironmentVariables([string]$key.GetValue($n))
         $exe0 = (Split-CommandLine $cmdl)[0]
         $miss = $exe0 -match '^[A-Za-z]:\\' -and -not (Test-Path -LiteralPath $exe0)
-        $rows.Add((New-Row @{ Name = $n; Sub = $cmdl; C1 = $d.Scope; Key = $n; Data = @{ Appr = $d.Appr; Name = $n }
+        $rows.Add((New-Row @{ RawName = $n; Sub = $cmdl; C1 = $d.Scope; Key = $n; Data = @{ Appr = $d.Appr; Name = $n }
             Tag = $(if ($miss) { 'file mancante' } elseif ($en) { 'attivo' } else { 'disattivato' }); TagKind = $(if ($miss) { 'err' } elseif ($en) { 'ok' } else { 'warn' }) }))
     }
 }
@@ -4742,7 +4773,7 @@ foreach ($sv in Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | So
     if (Test-Abort) { return }
     $mode = switch ($sv.StartMode) { 'Auto' { 'automatico' } 'Manual' { 'manuale' } 'Disabled' { 'disattivato' } default { [string]$sv.StartMode } }
     $ess = "$($sv.DisplayName) $co $exe" -match 'antivirus|anti-virus|security|defender|eset|kaspersky|bitdefender|norton|avast|avg|sophos|malwarebytes|trend micro|mcafee|audio|realtek|waves|dolby|nahimic|bluetooth|synaptics|elan|touchpad|precision|intel.*(management|graphics|dynamic|thunderbolt|rapid|optane)|nvidia display|amd (external|crash|user)|wlan|wi-?fi|killer|vpn|openvpn|wireguard|backup|veeam|printer|spooler|tpm|biometric|fingerprint|vmware|virtualbox|hyper-v|docker'
-    $rows.Add((New-Row @{ Name = $sv.DisplayName; Sub = "$(if ($co) { "$co  ·  " })$exe"; Key = $sv.Name; C1 = $mode
+    $rows.Add((New-Row @{ RawName = $sv.DisplayName; Sub = "$(if ($co) { "$co  ·  " })$exe"; Key = $sv.Name; C1 = $mode
         C2 = $(if ($sv.State -eq 'Running') { 'in esecuzione' } else { 'fermo' }); Checkable = (-not $ess -or [bool]$changed[$sv.Name])
         Tag = $(if ($changed[$sv.Name]) { 'modificato' } elseif ($ess) { 'essenziale' } else { $mode })
         TagKind = $(if ($changed[$sv.Name]) { 'warn' } else { switch ($sv.StartMode) { 'Auto' { 'info' } 'Disabled' { 'warn' } default { 'none' } } }) })) | Out-Null
@@ -4817,7 +4848,7 @@ $gen = { foreach ($t in $tops) { if (-not $t.PSIsContainer) { $t } elseif (-not 
 }
 $n = $script:n
 foreach ($f in $big | Sort-Object Length -Descending | Select-Object -First 100) {
-    $rows.Add((New-Row @{ Name = $f.Name; Sub = $f.DirectoryName; Key = $f.FullName; C1 = (Format-Size $f.Length); C2 = $f.LastWriteTime.ToString('dd/MM/yyyy')
+    $rows.Add((New-Row @{ RawName = $f.Name; Sub = $f.DirectoryName; Key = $f.FullName; C1 = (Format-Size $f.Length); C2 = $f.LastWriteTime.ToString('dd/MM/yyyy')
         Tag = $(if ($f.LastWriteTime -lt (Get-Date).AddYears(-1)) { 'non modificato da 1 anno' } else { '' }); TagKind = 'warn' })) | Out-Null
 }
 $sync.ScanInfo = "$($rows.Count) file oltre 100 MB su $n analizzati in $root. Quelli eliminati vanno nel Cestino."
@@ -4897,7 +4928,7 @@ $ScanLeftovers = @'
 foreach ($x in @(Read-Json 'leftovers.json' @()) | Where-Object { $_ }) {
     if (-not (Test-Path -LiteralPath $x.P)) { continue }
     $isDir = $x.T -eq 'dir'
-    $rows.Add((New-Row @{ Name = $x.P; Sub = "Residuo di $($x.App)"; Key = $x.P; Data = $x.T; C1 = $(if ($isDir) { 'cartella' } else { 'registro' })
+    $rows.Add((New-Row @{ RawName = $x.P; Sub = "Residuo di $($x.App)"; Key = $x.P; Data = $x.T; C1 = $(if ($isDir) { 'cartella' } else { 'registro' })
         C2 = $(if ($isDir) { Format-Size (Get-DirSize @($x.P)) } else { '' }); Selected = $true; Glyph = [string][char]$(if ($isDir) { 0xE8B7 } else { 0xE74C }) })) | Out-Null
 }
 $sync.ScanInfo = 'Cartelle e chiavi di registro rimaste dopo le disinstallazioni. Le cartelle vanno nel Cestino, le chiavi vengono salvate in Dati\Residui prima di eliminarle.'
@@ -4967,7 +4998,7 @@ $tot = [double]($list | Measure-Object S -Sum).Sum
 foreach ($e in $list | Sort-Object S -Descending | Select-Object -First 60) {
     $pct = if ($tot) { $e.S / $tot } else { 0 }
     $bar = ([string][char]0x2588 * [int][math]::Round($pct * 14)).PadRight(14, [char]0x2591)
-    $rows.Add((New-Row @{ Name = $e.I.Name; Sub = $e.I.FullName; Key = $e.I.FullName; Data = [bool]$e.I.PSIsContainer; C1 = (Format-Size $e.S); C2 = $bar
+    $rows.Add((New-Row @{ RawName = $e.I.Name; Sub = $e.I.FullName; Key = $e.I.FullName; Data = [bool]$e.I.PSIsContainer; C1 = (Format-Size $e.S); C2 = $bar
         Tag = ('{0:N0}%' -f ($pct * 100)); Glyph = [string][char]$(if ($e.I.PSIsContainer) { 0xE8B7 } else { 0xE7C3 }) })) | Out-Null
 }
 $sync.ScanInfo = "$root  ·  $(Format-Size $tot) in totale. Seleziona una cartella e premi ENTRA."
@@ -4987,8 +5018,8 @@ try {
     $tot = [double]$cs.TotalPhysicalMemory; $free = [double]$os.FreePhysicalMemory * 1KB
     $info.RamPct = [int][Math]::Round(($tot - $free) / $tot * 100)
     $info.Ram    = '{0:N1} / {1:N0} GB' -f (($tot - $free) / 1GB), ($tot / 1GB)
-    $up = (Get-Date) - $os.LastBootUpTime
-    $info.Uptime = '{0}g {1}h {2}m' -f $up.Days, $up.Hours, $up.Minutes
+    $up = (Get-Date) - (Get-RealBootTime)
+    $info.Uptime = $(if ([MtTr]::On) { '{0}d {1}h {2}m' } else { '{0}g {1}h {2}m' }) -f $up.Days, $up.Hours, $up.Minutes
     $info.Disks = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object {
         @{ Name = $_.DeviceID; Label = [string]$_.VolumeName; Size = [double]$_.Size; Free = [double]$_.FreeSpace } })
 } catch {}
@@ -5356,7 +5387,7 @@ $CacheDeps = @{
     security = 'security'; startup = 'startup'; services = 'services'; backup = 'backup'; restore = 'restore'; bench = 'bench'; repair = 'repair'
 }
 function Invalidate-Cache([string]$Mode) {
-    $list = if ($Mode -and $CacheDeps[$Mode]) { @($CacheDeps[$Mode]) } elseif ($Mode) { @($Mode) } else { @($sync.Cache.Keys) }
+    $list = if ($Mode -and $CacheDeps[$Mode]) { @($CacheDeps[$Mode]) } elseif ($Mode) { @($Mode) } else { [Threading.Monitor]::Enter($sync.Cache.SyncRoot); try { @($sync.Cache.Keys) } finally { [Threading.Monitor]::Exit($sync.Cache.SyncRoot) } }
     foreach ($k in $list + 'history', 'full', 'deliver') { $sync.Cache.Remove($k) }
     if (-not $Mode -or $Mode -in 'full', 'deliver') { $sync.HwCache = $null; $State.HwLoaded = $false }
     Start-Prefetch
@@ -5583,7 +5614,7 @@ function Update-BackupTask {
     try {
         if ($Settings.BackupAuto -and $Settings.BackupDest) {
             $vbs = Join-Path $DataDir 'backup.vbs'
-            Write-TaskVbs $vbs @('Set sh = CreateObject("WScript.Shell")', ('sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""' + $ScriptPath + '"" -Backup", 0, True'))
+            Write-TaskVbs $vbs @('Set sh = CreateObject("WScript.Shell")', ('sh.Run """' + $PsExe + '"" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""' + $ScriptPath + '"" -Backup", 0, True'))
             $act = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbs`""
             $trg = New-ScheduledTaskTrigger -Daily -At ([datetime]::ParseExact($Settings.BackupTime, 'H:mm', $null))
             $pr  = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Highest
@@ -6007,7 +6038,7 @@ function Release-AppMutex { try { $Mutex.ReleaseMutex() } catch {}; try { if ($G
 function Restart-App {
     $State.ForceClose = $true
     $hid = if (-not $win.IsVisible -and $Settings.Tray) { ' -Hidden' } else { '' }
-    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`" -Restart$hid" -WindowStyle Hidden
+    Start-Process $PsExe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`" -Restart$hid" -WindowStyle Hidden
     Release-AppMutex
     $win.Close()
 }
@@ -6030,7 +6061,7 @@ function Show-Main {
     if ($State.DeferPrefetch) { $State.DeferPrefetch = $false; Start-Prefetch }
 }
 $Tray.Add_DoubleClick({ Show-Main })
-$Tray.Add_BalloonTipClicked({ Show-Main; Open-Mode 'updates' })
+$Tray.Add_BalloonTipClicked({ Show-Main; if ($State.BalloonMode -and $sync.Phase -ne 'run') { Open-Mode $State.BalloonMode } })
 $miOpen.Add_Click({ Show-Main })
 $miUpd.Add_Click({ Show-Main; Open-Mode 'updates' })
 $miFull.Add_Click({ Show-Main; Open-Mode 'full' })
@@ -6043,7 +6074,7 @@ $CountCode = @'
 try {
     $excl = Read-Exclusions
     $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity' 300
-    $sync.UpdCount = @(ConvertFrom-WingetTable $r.Out | Where-Object { $_.Cols.Count -ge 4 -and $excl -notcontains $_.Cols[1] -and $_.Cols[1] -notmatch '…$' -and -not (Test-SkippedVer $_.Cols) }).Count
+    $sync.UpdCount = @(ConvertFrom-WingetTable $r.Out -FirstOnly | Where-Object { $_.Cols.Count -ge 4 -and $excl -notcontains $_.Cols[1] -and $_.Cols[1] -notmatch '…$' -and -not (Test-SkippedVer $_.Cols) }).Count
 } catch { $sync.UpdCount = -1 }
 '@
 function Start-CountCheck { $sync.UpdCount = $null; Start-Bg $CountCode @{} }
@@ -6237,8 +6268,8 @@ $ui.SetRestore.Add_Click({
 
 function Register-AutoTask([string]$day, [string]$time) {
     $vbs = Join-Path $DataDir 'auto.vbs'; $vbs2 = Join-Path $DataDir 'auto-logon.vbs'
-    Write-TaskVbs $vbs @('Set sh = CreateObject("WScript.Shell")', ('sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""' + $ScriptPath + '"" -Auto", 0, True'))
-    Write-TaskVbs $vbs2 @('Set sh = CreateObject("WScript.Shell")', ('sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""' + $ScriptPath + '"" -Auto -Logon", 0, True'))
+    Write-TaskVbs $vbs @('Set sh = CreateObject("WScript.Shell")', ('sh.Run """' + $PsExe + '"" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""' + $ScriptPath + '"" -Auto", 0, True'))
+    Write-TaskVbs $vbs2 @('Set sh = CreateObject("WScript.Shell")', ('sh.Run """' + $PsExe + '"" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""' + $ScriptPath + '"" -Auto -Logon", 0, True'))
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $pr  = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Highest
     $st  = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 3) -WakeToRun:([bool]$Settings.AutoWake)
@@ -6352,7 +6383,7 @@ function Update-StartupTask {
     try {
         if ($Settings.StartWithWindows) {
             $vbs = Join-Path $DataDir 'avvio.vbs'
-            Write-TaskVbs $vbs @('Set sh = CreateObject("WScript.Shell")', ('sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""' + $ScriptPath + '"" -Hidden", 0, False'))
+            Write-TaskVbs $vbs @('Set sh = CreateObject("WScript.Shell")', ('sh.Run """' + $PsExe + '"" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""' + $ScriptPath + '"" -Hidden", 0, False'))
             $act = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbs`""
             $trg = New-ScheduledTaskTrigger -AtLogOn -User ([Security.Principal.WindowsIdentity]::GetCurrent().Name)
             $trg.Delay = 'PT30S'
@@ -6370,8 +6401,8 @@ function Repair-Tasks {
         $vbs = Join-Path $DataDir $d.F
         $cur = if (Test-Path $vbs) { Get-Content $vbs -Raw } else { '' }
         $act = @($t.Actions)[0]
-        if ($cur -notlike "*$ScriptPath*" -or $act.Arguments -ne "`"$vbs`"") {
-            Write-TaskVbs $vbs @('Set sh = CreateObject("WScript.Shell")', ('sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""' + $ScriptPath + '"" ' + $d.A + '", 0, ' + $d.W))
+        if ($cur -notlike "*$ScriptPath*" -or $cur -notlike "*$PsExe*" -or $act.Arguments -ne "`"$vbs`"") {
+            Write-TaskVbs $vbs @('Set sh = CreateObject("WScript.Shell")', ('sh.Run """' + $PsExe + '"" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""' + $ScriptPath + '"" ' + $d.A + '", 0, ' + $d.W))
             Set-ScheduledTask -TaskName $d.T -Action (New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbs`"") | Out-Null
             Write-ErrLog "Attività '$($d.T)' aggiornata al nuovo percorso"
         }
@@ -6468,7 +6499,7 @@ $timer.Add_Tick({
 
     # Stress test
     if ($State.StressUntil) {
-        foreach ($se in @($sync.Sens)) { if ($se -and $se.T -eq 'Temperature' -and $se.V -gt $State.StressMax -and $se.V -lt 125) { $State.StressMax = [double]$se.V } }
+        foreach ($se in @($sync.Sens)) { if ($se -and $se.T -eq 'Temperature' -and "$($se.G) $($se.N)" -match '(?i)cpu|core|package|tctl|tdie|processor|processore|zona termica' -and "$($se.G) $($se.N)" -notmatch '(?i)gpu|disk|disco|nvme|ssd' -and $se.V -gt $State.StressMax -and $se.V -lt 125) { $State.StressMax = [double]$se.V } }
         $left = $State.StressUntil - (Get-Date)
         if ($left.TotalSeconds -le 0) {
             $sync.Stress = $false; $State.StressUntil = $null; $ui.HwStress.Content = T 'Stress test CPU'
@@ -6491,7 +6522,7 @@ $timer.Add_Tick({
         $n = $sync.UpdCount; $sync.UpdCount = $null
         if ($n -gt 0) {
             $ui.QUpdSub.Text = "$n aggiornamenti disponibili"
-            if ($Tray.Visible -and $n -gt [int]$State.LastUpdN) { $Tray.ShowBalloonTip(6000, 'MultiTool', (T "$n aggiornamenti disponibili. Clicca per vederli."), 'Info') }
+            if ($Tray.Visible -and $n -gt [int]$State.LastUpdN) { $State.BalloonMode = 'updates'; $Tray.ShowBalloonTip(6000, 'MultiTool', (T "$n aggiornamenti disponibili. Clicca per vederli."), 'Info') }
         } elseif ($n -eq 0) { $ui.QUpdSub.Text = 'Tutto aggiornato' }
         $State.LastUpdN = $n
     }
@@ -6533,15 +6564,15 @@ $timer.Add_Tick({
             $det = @($(if ($d.Media -and $d.Media -ne 'Unspecified') { $d.Media }), $(if ($d.Size) { Format-Size $d.Size }),
                      $(if ($d.Temp) { "$($d.Temp) °C" }), $(if ($null -ne $d.Wear) { "usura $($d.Wear)%" }), $(if ($d.Hours) { "$($d.Hours) ore" })) | Where-Object { $_ }
             $col = if ($ok) { '#34D399' } elseif ($d.Health -eq 'Warning') { '#FBBF24' } else { '#F87171' }
-            $ui.HHealth.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($HealthTpl -f [Security.SecurityElement]::Escape($d.Name), [Security.SecurityElement]::Escape($det -join '  ·  '), (T $st), $col)))) | Out-Null
+            $ui.HHealth.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($HealthTpl -f [Security.SecurityElement]::Escape($d.Name), [Security.SecurityElement]::Escape((T ($det -join '  ·  '))), (T $st), $col)))) | Out-Null
         }
         if ($i.Bat) {
             $h = $i.Bat.Health
             $col = if ($null -eq $h) { '#9AA0B8' } elseif ($h -ge 80) { '#34D399' } elseif ($h -ge 60) { '#FBBF24' } else { '#F87171' }
             $txt = "Carica $($i.Bat.Charge)%" + $(if ($null -ne $h) { "  ·  capacità $h% rispetto al nuovo" } else { '' })
-            $ui.HHealth.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($HealthTpl -f 'Batteria', $txt, $(if ($null -eq $h) { 'n.d.' } elseif ($h -ge 80) { 'Buona' } elseif ($h -ge 60) { 'Usurata' } else { 'Da sostituire' }), $col)))) | Out-Null
+            $ui.HHealth.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($HealthTpl -f (T 'Batteria'), (T $txt), $(if ($null -eq $h) { 'n.d.' } elseif ($h -ge 80) { 'Buona' } elseif ($h -ge 60) { 'Usurata' } else { 'Da sostituire' }), $col)))) | Out-Null
         }
-        if (-not $ui.HHealth.Children.Count) { $ui.HHealth.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($HealthTpl -f 'Dati non disponibili', 'Il sistema non espone lo stato dei dischi', '—', '#9AA0B8')))) | Out-Null }
+        if (-not $ui.HHealth.Children.Count) { $ui.HHealth.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($HealthTpl -f (T 'Dati non disponibili'), (T 'Il sistema non espone lo stato dei dischi'), '—', '#9AA0B8')))) | Out-Null }
         $ui.HDisks.Children.Clear()
         foreach ($d in $i.Disks) {
             if (-not $d.Size) { continue }
@@ -6698,7 +6729,7 @@ $timer.Add_Tick({
             $ui.LSub.Text = T 'Operazione completata.'
             $ui.LSummary.Text = $sum
             try { Export-Report $sum } catch { Write-ErrLog "Rapporto: $($_.Exception.Message)" }
-            if (-not $win.IsVisible -and $Tray.Visible) { $Tray.ShowBalloonTip(6000, 'MultiTool', "$($M.Title): $sum", 'Info') }
+            if (-not $win.IsVisible -and $Tray.Visible) { $State.BalloonMode = $null; $Tray.ShowBalloonTip(6000, 'MultiTool', "$($M.Title): $sum", 'Info') }
             elseif (-not $win.IsActive) { Show-Toast "MultiTool - $($M.Title)" $(if ($sum) { $sum } else { 'Operazione completata' }) }
             $ui.LCsv.Visibility = Vis ($Items.Count -gt 0)
             $ui.LGo.Visibility = 'Collapsed'; $ui.LGo2.Visibility = 'Collapsed'
@@ -6714,7 +6745,7 @@ $timer.Start()
 # ============================================================
 $ui.TitleBar.Add_MouseLeftButtonDown({ param($s, $e) if ($e.ClickCount -eq 2) { $win.WindowState = if ($win.WindowState -eq 'Maximized') { 'Normal' } else { 'Maximized' } } else { $win.DragMove() } })
 $ui.BtnMin.Add_Click({
-    if ($Settings.Tray) { $win.Hide(); if (-not $State.TrayTip) { $State.TrayTip = $true; $Tray.ShowBalloonTip(4000, 'MultiTool', 'MultiTool resta attivo qui. Doppio clic per riaprirlo.', 'Info') } }
+    if ($Settings.Tray) { $win.Hide(); if (-not $State.TrayTip) { $State.TrayTip = $true; $State.BalloonMode = $null; $Tray.ShowBalloonTip(4000, 'MultiTool', 'MultiTool resta attivo qui. Doppio clic per riaprirlo.', 'Info') } }
     else { $win.WindowState = 'Minimized' }
 })
 $win.Add_StateChanged({

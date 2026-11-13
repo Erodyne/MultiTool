@@ -51,6 +51,7 @@ jobs:
       - name: Compila MultiTool.exe
         shell: pwsh
         run: |
+          (Get-Content build\Launcher.cs -Raw) -replace 'AssemblyVersion\("[^"]+"\)', "AssemblyVersion(`"${{ steps.v.outputs.version }}`")" | Set-Content build\Launcher.cs -Encoding UTF8
           & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ `
             /out:MultiTool.exe /win32icon:MultiTool.ico build\Launcher.cs
           if (-not (Test-Path MultiTool.exe)) { throw 'Compilazione non riuscita' }
