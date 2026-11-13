@@ -1,9 +1,9 @@
-﻿param([switch]$Auto, [switch]$Backup, [switch]$Uninstall)
+﻿param([switch]$Auto, [switch]$Backup, [switch]$Uninstall, [switch]$Hidden)
 # ============================================================
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.11.5'
+$AppVersion = '2026.11.13.1'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
@@ -198,9 +198,15 @@ function Get-Settings {
     $def = @{ Restore = $true; AutoEnabled = $false; AutoDay = 'Sunday'; AutoTime = '12:00'; Theme = 'dark'; Tray = $true; UpdateUrl = 'https://raw.githubusercontent.com/Erodyne/MultiTool/main'
               WinL = $null; WinT = $null; WinW = $null; WinH = $null; WinMax = $false; Lhm = $false
               ShopName = ''; ShopPhone = ''; ShopEmail = ''; ShopWeb = ''; ShopLogo = ''; WarrantyMonths = 24
-              BackupDest = ''; LastBackup = ''; BackupAuto = $false; BackupTime = '13:00'; SensLog = $false; Lang = 'it'; Prefetch = $true; AutoSelfUpdate = $true; TermsAccepted = '' }
+              BackupDest = ''; LastBackup = ''; BackupAuto = $false; BackupTime = '13:00'; SensLog = $false; Lang = 'it'; Prefetch = $true; AutoSelfUpdate = $true; TermsAccepted = ''; AutoFull = $false }
     foreach ($k in $def.Keys) { if (-not ($s.PSObject.Properties.Name -contains $k)) { $s | Add-Member -NotePropertyName $k -NotePropertyValue $def[$k] -Force } }
     $s
+}
+
+function Save-Settings {
+    $disk = Read-Json 'settings.json' $null
+    if ($disk -and $disk.LastBackup -and (-not $Settings.LastBackup -or [datetime]$disk.LastBackup -gt [datetime]$Settings.LastBackup)) { $Settings.LastBackup = $disk.LastBackup }
+    Save-Json 'settings.json' $Settings
 }
 
 function Add-History([string]$Area, [string]$Name, [string]$Result, [string]$Kind) {
@@ -221,6 +227,12 @@ function New-RestorePoint([string]$Desc) {
         if ($null -eq $old) { Remove-ItemProperty $k -Name SystemRestorePointCreationFrequency -ErrorAction SilentlyContinue }
         else { Set-ItemProperty $k -Name SystemRestorePointCreationFrequency -Value $old -Type DWord -ErrorAction SilentlyContinue }
     }
+}
+
+function Test-Online {
+    if (-not [Net.NetworkInformation.NetworkInterface]::GetIsNetworkAvailable()) { return $false }
+    foreach ($h in '1.1.1.1', '8.8.8.8') { try { if ((New-Object Net.NetworkInformation.Ping).Send($h, 1500).Status -eq 'Success') { return $true } } catch {} }
+    try { [void][Net.Dns]::GetHostAddresses('github.com'); return $true } catch { return $false }
 }
 
 function Test-PendingReboot {
@@ -346,6 +358,9 @@ function Get-CleanTargets {
         @{ Id = 'do';      Name = 'Ottimizzazione recapito';      Def = $true;  Desc = 'Cache di condivisione aggiornamenti'; Paths = @("$env:SystemRoot\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache") }
         @{ Id = 'wer';     Name = 'Segnalazioni errori';          Def = $true;  Desc = 'Report di errore di Windows'; Paths = @("$env:ProgramData\Microsoft\Windows\WER\ReportArchive", "$env:ProgramData\Microsoft\Windows\WER\ReportQueue") }
         @{ Id = 'dump';    Name = 'Dump di arresto anomalo';      Def = $true;  Desc = 'Minidump e crash dump delle app'; Paths = @("$env:SystemRoot\Minidump", "$env:LOCALAPPDATA\CrashDumps") }
+        @{ Id = 'edge';    Name = 'Cache di Microsoft Edge';     Def = $false; Desc = 'Chiudi Edge prima di pulire  ·  password e cronologia non vengono toccate'; Paths = @("$env:LOCALAPPDATA\Microsoft\Edge\User Data\*\Cache\Cache_Data", "$env:LOCALAPPDATA\Microsoft\Edge\User Data\*\Code Cache") }
+        @{ Id = 'chrome';  Name = 'Cache di Google Chrome';      Def = $false; Desc = 'Chiudi Chrome prima di pulire  ·  password e cronologia non vengono toccate'; Paths = @("$env:LOCALAPPDATA\Google\Chrome\User Data\*\Cache\Cache_Data", "$env:LOCALAPPDATA\Google\Chrome\User Data\*\Code Cache") }
+        @{ Id = 'firefox'; Name = 'Cache di Mozilla Firefox';    Def = $false; Desc = 'Chiudi Firefox prima di pulire  ·  password e cronologia non vengono toccate'; Paths = @("$env:LOCALAPPDATA\Mozilla\Firefox\Profiles\*\cache2") }
         @{ Id = 'thumb';   Name = 'Cache miniature';              Def = $false; Desc = 'Verrà ricreata automaticamente'; Paths = @("$env:LOCALAPPDATA\Microsoft\Windows\Explorer\thumbcache_*.db") }
         @{ Id = 'recycle'; Name = 'Cestino';                      Def = $false; Desc = 'Svuota definitivamente il cestino'; Paths = @() }
     )
@@ -419,13 +434,13 @@ function Test-Tweak($t) {
     }
     $true
 }
-function Wait-Uninstallers([datetime]$Since, [int]$Minutes = 20) {
+function Wait-Uninstallers([datetime]$Since, [int]$Minutes = 10) {
     $end = (Get-Date).AddMinutes($Minutes)
     Start-Sleep -Seconds 2
-    while ((Get-Date) -lt $end) {
+    while ((Get-Date) -lt $end -and -not $sync.Cancel) {
         $p = Get-Process -ErrorAction SilentlyContinue | Where-Object {
-            ($_.ProcessName -match '^(Au_|Un_A|Un_|unins\d*|_iu14D2N|uninstall|uninst|Uninstaller)') -or
-            ($_.Path -and $_.Path -like "$env:TEMP*" -and $_.StartTime -ge $Since) }
+            $st = $null; try { $st = $_.StartTime } catch {}
+            $st -and $st -ge $Since -and (($_.ProcessName -match '^(Au_|Un_A|Un_|unins\d*|_iu14D2N|uninstall|uninst|Uninstaller)') -or ($_.Path -and $_.Path -like "$env:TEMP*")) }
         if (-not $p) { break }
         Start-Sleep -Seconds 2
     }
@@ -779,6 +794,7 @@ function Get-BenchTests {
 }
 
 function Show-Toast([string]$Title, [string]$Text) {
+    if ('MtTr' -as [type]) { $Title = [MtTr]::T($Title); $Text = [MtTr]::T($Text) }
     try {
         [void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
         [void][Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
@@ -794,12 +810,838 @@ function Show-Toast([string]$Title, [string]$Text) {
 . ([scriptblock]::Create($Helpers))
 
 # ============================================================
+#  Traduzione (italiano -> inglese) e tipi condivisi
+# ============================================================
+$MtCs = @'
+using System;
+using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.ComponentModel;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Windows;
+public static class MtTr {
+    public static bool On = false;
+    static readonly Dictionary<string, string> Ex = new Dictionary<string, string>(StringComparer.Ordinal);
+    class Pat { public Regex R; public string En, Pre, Suf; }
+    static readonly List<Pat> Pt = new List<Pat>();
+    static readonly List<KeyValuePair<string, string>> Fr = new List<KeyValuePair<string, string>>();
+    static readonly ConcurrentDictionary<string, string> Cache = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
+    static readonly string[] Seps = { "\n", "   \u00B7   ", "  \u00B7  " };
+    public static int Count { get { return Ex.Count + Pt.Count + Fr.Count; } }
+    public static void Load(string table) {
+        foreach (var raw in table.Split('\n')) {
+            var line = raw.TrimEnd('\r');
+            int i = line.IndexOf(" ⇒ ");
+            if (i < 0) continue;
+            string it = line.Substring(0, i).Replace("\\n", "\n"), en = line.Substring(i + 3).Replace("\\n", "\n");
+            if (it.StartsWith("~")) { Fr.Add(new KeyValuePair<string, string>(it.Substring(1), en)); continue; }
+            if (Regex.IsMatch(it, @"\{\d\}")) {
+                var parts = Regex.Split(it, @"\{(\d)\}");
+                var sb = new StringBuilder("^");
+                for (int k = 0; k < parts.Length; k++) {
+                    if (k % 2 == 0) sb.Append(Regex.Escape(parts[k])); else sb.Append("(?<g" + parts[k] + ">.*?)");
+                }
+                sb.Append("$");
+                Pt.Add(new Pat { R = new Regex(sb.ToString(), RegexOptions.Singleline), En = en, Pre = parts[0], Suf = parts[parts.Length - 1] });
+            } else { Ex[it] = en; }
+        }
+        Pt.Sort((a, b) => (b.Pre.Length + b.Suf.Length).CompareTo(a.Pre.Length + a.Suf.Length));
+        Cache.Clear();
+    }
+    public static string T(string s) { return Tr(s, 0); }
+    static string Tr(string s, int depth) {
+        if (!On || string.IsNullOrEmpty(s) || depth > 3) return s;
+        string r;
+        if (Cache.TryGetValue(s, out r)) return r;
+        r = Do(s, depth);
+        if (Cache.Count < 20000) Cache[s] = r;
+        return r;
+    }
+    static string Do(string s, int depth) {
+        string r;
+        if (Ex.TryGetValue(s, out r)) return r;
+        string tr = s.Trim();
+        if (tr.Length != s.Length && tr.Length > 0 && Ex.TryGetValue(tr, out r)) return s.Replace(tr, r);
+        foreach (var p in Pt) {
+            if (s.Length < p.Pre.Length + p.Suf.Length || !s.StartsWith(p.Pre, StringComparison.Ordinal) || !s.EndsWith(p.Suf, StringComparison.Ordinal)) continue;
+            var m = p.R.Match(s);
+            if (!m.Success) continue;
+            string o = p.En;
+            for (int g = 0; g < 10; g++) { var gr = m.Groups["g" + g]; if (gr.Success) o = o.Replace("{" + g + "}", Tr(gr.Value, depth + 1)); }
+            return o;
+        }
+        foreach (var sep in Seps) {
+            if (s.IndexOf(sep, StringComparison.Ordinal) < 0) continue;
+            var parts = s.Split(new[] { sep }, StringSplitOptions.None);
+            for (int k = 0; k < parts.Length; k++) parts[k] = Tr(parts[k], depth + 1);
+            return string.Join(sep, parts);
+        }
+        string f = s;
+        foreach (var x in Fr) f = f.Replace(x.Key, x.Value);
+        return f;
+    }
+    public static MessageBoxResult Msg(string t) { return MessageBox.Show(T(t)); }
+    public static MessageBoxResult Msg(string t, string c) { return MessageBox.Show(T(t), c); }
+    public static MessageBoxResult Msg(string t, string c, MessageBoxButton b) { return MessageBox.Show(T(t), c, b); }
+    public static MessageBoxResult Msg(string t, string c, MessageBoxButton b, MessageBoxImage i) { return MessageBox.Show(T(t), c, b, i); }
+}
+
+public class MtItem : INotifyPropertyChanged {
+    public event PropertyChangedEventHandler PropertyChanged;
+    readonly Dictionary<string, object> v = new Dictionary<string, object>();
+    object G(string n, object d) { lock (v) { object o; return v.TryGetValue(n, out o) ? o : d; } }
+    void S(string n, object val) {
+        lock (v) { v[n] = val; }
+        var h = PropertyChanged; if (h != null) h(this, new PropertyChangedEventArgs(n));
+    }
+    public bool   Selected   { get { return (bool)G("Selected", false); }   set { S("Selected", value); } }
+    public bool   Editable   { get { return (bool)G("Editable", true); }    set { S("Editable", value); } }
+    public bool   Checkable  { get { return (bool)G("Checkable", true); }   set { S("Checkable", value); } }
+    public bool   Arrow      { get { return (bool)G("Arrow", false); }      set { S("Arrow", value); } }
+    public string Name       { get { return (string)G("Name", ""); }        set { S("Name", MtTr.T(value)); } }
+    public string Sub        { get { return (string)G("Sub", ""); }         set { S("Sub", MtTr.T(value)); } }
+    public string C1         { get { return (string)G("C1", ""); }          set { S("C1", MtTr.T(value)); } }
+    public string C2         { get { return (string)G("C2", ""); }          set { S("C2", MtTr.T(value)); } }
+    public string Tag        { get { return (string)G("Tag", ""); }         set { S("Tag", MtTr.T(value)); } }
+    public string TagKind    { get { return (string)G("TagKind", "none"); } set { S("TagKind", value); } }
+    public string Status     { get { return (string)G("Status", ""); }      set { S("Status", MtTr.T(value)); } }
+    public string StatusKind { get { return (string)G("StatusKind", "none"); } set { S("StatusKind", value); } }
+    public string Glyph      { get { return (string)G("Glyph", ""); }       set { S("Glyph", value); } }
+    public string Key        { get { return (string)G("Key", ""); }         set { S("Key", value); } }
+    public object Data       { get { return G("Data", null); }              set { S("Data", value); } }
+}
+
+'@
+$TrTable = @'
+ - riavvio consigliato ⇒  - restart recommended
+ selezionati ⇒  selected
+  ·  riavvio richiesto ⇒   ·  restart required
+Accesso remoto al PC ⇒ Remote access to the PC
+Account Administrator integrato ⇒ Built-in Administrator account
+Aggiornamenti di sistema consigliati ⇒ Recommended system updates
+Aggiornamenti di sistema consigliati (non i facoltativi) ⇒ Recommended system updates (not optional ones)
+Aggiornamento automatico disattivato ⇒ Automatic update disabled
+Aggiornamento automatico pianificato ⇒ Automatic update scheduled
+Alcune modifiche saranno attive dopo aver riavviato o disconnesso l'utente ⇒ Some changes take effect after a restart or sign-out
+AMBITO ⇒ SCOPE
+Analisi del disco di sistema (CHKDSK) ⇒ System disk check (CHKDSK)
+Analisi di winget e Microsoft Store… ⇒ Checking winget and Microsoft Store…
+Analizzo i driver installati… ⇒ Analysing installed drivers…
+Anno di produzione ⇒ Year of manufacture
+Annullamento dopo l'elemento in corso… ⇒ Cancelling after the current item…
+Annullamento… ⇒ Cancelling…
+Annullato ⇒ Cancelled
+APPLICA ⇒ APPLY
+APPLICA attiva le opzioni selezionate, RIPRISTINA riporta i valori di prima (salvati in Dati\privacy-backup.json). ⇒ APPLY enables the selected options, RESTORE brings back the previous values (saved in Dati\privacy-backup.json).
+Applica impostazioni privacy ⇒ Apply privacy settings
+Applicate ⇒ Applied
+applicato ⇒ applied
+Applicato ⇒ Applied
+Applico ⇒ Applying
+Apri cartella dati ⇒ Open data folder
+assente ⇒ absent
+Attendi la fine dell'operazione in corso ⇒ Wait for the current operation to finish
+Attendi la fine della raccolta delle informazioni ⇒ Wait until information gathering is finished
+Attendo il disinstallatore… ⇒ Waiting for the uninstaller…
+attenzione ⇒ warning
+ATTIVA ⇒ ENABLE
+attiva ⇒ on
+Attiva nel firmware ⇒ Enabled in firmware
+Attiva sensori avanzati ⇒ Enable advanced sensors
+Attivato ⇒ Enabled
+Attività pianificata ⇒ Scheduled task
+Attività pianificata attiva ⇒ Scheduled task active
+attivo ⇒ on
+Automatico ⇒ Automatic
+Avviato ⇒ Started
+AVVIO ⇒ STARTUP
+Avvio ⇒ Boot
+Avvio automatico ⇒ Startup apps
+Avvio la scansione del Microsoft Store… ⇒ Starting the Microsoft Store scan…
+Backup automatico ⇒ Automatic backup
+Backup automatico disattivato ⇒ Automatic backup disabled
+Backup dei driver in corso… ⇒ Backing up drivers…
+Backup driver completato in Dati\DriverBackup ⇒ Driver backup completed in Dati\DriverBackup
+Batteria ⇒ Battery
+BitLocker / crittografia dispositivo ⇒ BitLocker / device encryption
+BitLocker non disponibile in questa edizione ⇒ BitLocker not available in this edition
+Blocca i programmi che partono da chiavette e CD ⇒ Blocks programs that start from USB sticks and CDs
+Blocca le app installate in automatico e i suggerimenti ⇒ Blocks automatically installed apps and suggestions
+bloccata ⇒ blocked
+Buon pomeriggio ⇒ Good afternoon
+Buongiorno ⇒ Good morning
+Buonasera ⇒ Good evening
+Cache di condivisione aggiornamenti ⇒ Update sharing cache
+Cache di Google Chrome ⇒ Google Chrome cache
+Cache di Microsoft Edge ⇒ Microsoft Edge cache
+Cache di Mozilla Firefox ⇒ Mozilla Firefox cache
+Cache di Windows Update ⇒ Windows Update cache
+Cache L2 / L3 ⇒ L2 / L3 cache
+Cache miniature ⇒ Thumbnail cache
+Calcolo delle cartelle… ⇒ Measuring folders…
+Calcolo dello spazio recuperabile… ⇒ Measuring reclaimable space…
+Capacità ⇒ Capacity
+Capacità attuale ⇒ Current capacity
+Capacità di progetto ⇒ Design capacity
+Carica ⇒ Charge
+Carico CPU ⇒ CPU load
+Cerca dispositivi con problemi ⇒ Looks for devices with problems
+Cerca tra migliaia di programmi e installali senza scaricare nulla a mano. ⇒ Search thousands of apps and install them without downloading anything by hand.
+Cerco aggiornamenti di Windows… ⇒ Searching for Windows updates…
+Cerco aggiornamenti di Windows… può richiedere qualche minuto ⇒ Searching for Windows updates… this can take a few minutes
+Cerco aggiornamenti… ⇒ Searching for updates…
+Cestino ⇒ Recycle Bin
+Chi usa MultiTool su computer di terzi (ad esempio clienti) è responsabile di avere il loro consenso e di informarli delle operazioni eseguite. ⇒ Anyone using MultiTool on third-party computers (for example customers) is responsible for obtaining their consent and informing them of the operations performed.
+Chiede conferma prima delle modifiche di sistema ⇒ Asks for confirmation before system changes
+Chimica ⇒ Chemistry
+Chip di sicurezza TPM ⇒ TPM security chip
+Chiudi Chrome prima di pulire  ·  password e cronologia non vengono toccate ⇒ Close Chrome before cleaning  ·  passwords and history are not touched
+Chiudi Edge prima di pulire  ·  password e cronologia non vengono toccate ⇒ Close Edge before cleaning  ·  passwords and history are not touched
+Chiudi Firefox prima di pulire  ·  password e cronologia non vengono toccate ⇒ Close Firefox before cleaning  ·  passwords and history are not touched
+Cicli di accensione ⇒ Power cycles
+Cicli di carica ⇒ Charge cycles
+Codice prodotto ⇒ Product code
+Collega un cavo o una rete Wi-Fi. ⇒ Connect a cable or a Wi-Fi network.
+Completata ⇒ Completed
+Completato ⇒ Completed
+Componenti di sistema… ⇒ System components…
+Condizioni d'uso ed esclusione di garanzia ⇒ Terms of use and disclaimer of warranty
+Configurazione di rete azzerata: riavvia il PC per completare ⇒ Network configuration reset: restart the PC to complete
+Configurazione esportata: importala sugli altri PC da Impostazioni ⇒ Configuration exported: import it on other PCs from Settings
+Configurazione importata. Riavviare MultiTool per applicarla? ⇒ Configuration imported. Restart MultiTool to apply it?
+connessa ⇒ connected
+Consigliato ⇒ Recommended
+Contatti ⇒ People
+Controlla aggiornamenti di MultiTool ⇒ Check for MultiTool updates
+Controllo account utente (UAC) ⇒ User Account Control (UAC)
+Controllo delle protezioni… ⇒ Checking protections…
+Controllo dello stato dei driver… ⇒ Checking drivers…
+Controllo driver ⇒ Driver check
+Controllo file di sistema (SFC) ⇒ System file check (SFC)
+Controllo i dispositivi con problemi… ⇒ Checking devices with problems…
+Copio ⇒ Copying
+Core / thread ⇒ Cores / threads
+CORREGGI ⇒ FIX
+Correggo ⇒ Fixing
+Corretto ⇒ Fixed
+Crea un file .json nella cartella Profili (vedi gli esempi inclusi). ⇒ Create a .json file in the Profiles folder (see the included examples).
+Creata ⇒ Created
+Creato ⇒ Created
+Creo il punto di ripristino… ⇒ Creating the restore point…
+Creo l'etichetta… ⇒ Creating the label…
+Creo un punto di ripristino… ⇒ Creating a restore point…
+Cronologia attività disattivata ⇒ Activity history disabled
+Da stampare e attaccare al case ⇒ To print and stick on the case
+Da verificare ⇒ To check
+DATA ⇒ DATE
+Data firmware ⇒ Firmware date
+datato ⇒ outdated
+Dati del negozio ⇒ Shop details
+Dati non disponibili ⇒ Data not available
+debole ⇒ weak
+Defender non attivo: probabilmente c'è un antivirus di terze parti ⇒ Defender not active: a third-party antivirus is probably installed
+Desktop remoto ⇒ Remote Desktop
+Destinazione non disponibile ⇒ Destination not available
+Destinazione non disponibile: collega il disco del backup ⇒ Destination not available: connect the backup drive
+Diagnosi della connessione… ⇒ Diagnosing the connection…
+Diagonale ⇒ Diagonal
+DISATTIVA ⇒ DISABLE
+disattiva ⇒ off
+Disattiva consigli e curiosità sulla schermata di blocco ⇒ Turns off tips and fun facts on the lock screen
+Disattiva nel firmware ⇒ Disabled in firmware
+Disattivare i sensori avanzati? ⇒ Disable advanced sensors?
+Disattivato ⇒ Disabled
+disattivato ⇒ off
+disattivo ⇒ off
+Dischi… ⇒ Disks…
+Disco ⇒ Disk
+discreto ⇒ fair
+Disinstallare {0} programmi? L'operazione non si può annullare. ⇒ Uninstall {0} apps? This cannot be undone.
+Disinstallare MultiTool da questo PC? ⇒ Uninstall MultiTool from this PC?
+Disinstallato ⇒ Uninstalled
+Disinstallo ⇒ Uninstalling
+DISM, SFC e CHKDSK · strumenti di Windows ⇒ DISM, SFC and CHKDSK · Windows tools
+DISM + SFC  ·  lenta (20-30 minuti) ⇒ DISM + SFC  ·  slow (20-30 minutes)
+DISM /Online /Cleanup-Image /RestoreHealth  ·  10-20 minuti ⇒ DISM /Online /Cleanup-Image /RestoreHealth  ·  10-20 minutes
+Dispositivi con problemi ⇒ Devices with problems
+Documenti ⇒ Documents
+Download… ⇒ Downloading…
+Dump di arresto anomalo ⇒ Crash dumps
+Elenco esportato. Usa "Importa elenco" sull'altro PC. ⇒ List exported. Use "Import list" on the other PC.
+Elenco vuoto ⇒ Empty list
+Elimina il più vecchio ⇒ Delete the oldest
+Eliminare definitivamente il contenuto di {0} categorie? ⇒ Permanently delete the contents of {0} categories?
+Eliminare il punto di ripristino più vecchio? ⇒ Delete the oldest restore point?
+Eliminare tutti i log? ⇒ Delete all logs?
+Elimino il punto più vecchio… ⇒ Deleting the oldest point…
+errore ⇒ error
+Errore ⇒ Error
+Errore 0x{0} ⇒ Error 0x{0}
+Errore: ⇒ Error:
+Errori di lettura ⇒ Read errors
+Errori trovati ⇒ Errors found
+Escludi selezionati ⇒ Exclude selected
+Esclusioni ⇒ Exclusions
+escluso ⇒ excluded
+Escluso dagli aggiornamenti manuali e automatici ⇒ Excluded from manual and automatic updates
+Esecuzione automatica da USB ⇒ AutoRun from USB
+Esegui prima DISM e poi SFC. Puoi continuare a usare il PC nel frattempo. ⇒ Run DISM first, then SFC. You can keep using the PC meanwhile.
+Eseguito ⇒ Done
+Eseguo ⇒ Running
+ESITO ⇒ RESULT
+Esperienze personalizzate disattivate ⇒ Tailored experiences disabled
+Esporta configurazione di MultiTool ⇒ Export MultiTool configuration
+Esporta inventario hardware ⇒ Export hardware inventory
+Esportazione in corso… ⇒ Exporting…
+Esportazione non riuscita ⇒ Export failed
+Etichetta con codice QR ⇒ QR code label
+Etichetta QR del PC ⇒ PC QR label
+Facoltativo ⇒ Optional
+Famiglia ⇒ Family
+Fatto. Puoi continuare a modificare. ⇒ Done. You can keep editing.
+File non trovato ⇒ File not found
+file riparati ⇒ files repaired
+File temporanei di Windows ⇒ Windows temporary files
+File temporanei utente ⇒ User temporary files
+Film e TV ⇒ Movies & TV
+Firewall… ⇒ Firewall…
+Firme antivirus ⇒ Antivirus signatures
+Frequenza base ⇒ Base clock
+Gestione attività ⇒ Task Manager
+Gestione dispositivi ⇒ Device Manager
+Giochi e app promozionali, reinstallabili dallo Store ⇒ Games and promotional apps, reinstallable from the Store
+Giochi King (Candy Crush…) ⇒ King games (Candy Crush…)
+Gruppi di programmi da installare in un colpo solo. ⇒ Groups of apps to install in one go.
+guidata ⇒ guided
+Hardware, programmi installati, garanzia e firme (HTML stampabile) ⇒ Hardware, installed apps, warranty and signatures (printable HTML)
+Hub di Feedback ⇒ Feedback Hub
+ID pubblicità disattivato ⇒ Advertising ID disabled
+ID troncato ⇒ Truncated ID
+Il file non contiene pacchetti winget validi. ⇒ The file contains no valid winget packages.
+Il programma modifica impostazioni di Windows e del registro di sistema, installa, aggiorna e rimuove programmi, app e driver, elimina file temporanei e può riavviare il computer. Prima di usarlo esegui un backup dei tuoi dati. Le operazioni vengono avviate solo dopo la tua conferma e, se l'opzione è attiva, dopo la creazione di un punto di ripristino. ⇒ The program changes Windows and registry settings, installs, updates and removes apps and drivers, deletes temporary files and may restart the computer. Back up your data before using it. Operations start only after your confirmation and, if the option is enabled, after a restore point has been created.
+Il sistema non espone lo stato dei dischi ⇒ The system does not expose disk health
+Il tema verrà applicato al prossimo avvio ⇒ The theme will be applied at the next start
+Immagini ⇒ Pictures
+Importa configurazione di MultiTool ⇒ Import MultiTool configuration
+Impostazioni Windows Update ⇒ Windows Update settings
+In "Aggiorna programmi" seleziona un programma e premi "Escludi selezionati". ⇒ In "Update apps" select an app and press "Exclude selected".
+In coda ⇒ Queued
+In corso… ⇒ In progress…
+Indirizzo visto da internet ⇒ Address seen from the internet
+Informazioni e note legali ⇒ About and legal notes
+installata ⇒ installed
+Installato ⇒ Installed
+Installato il ⇒ Installed on
+Installazione in corso… ⇒ Installing…
+Installazione… ⇒ Installing…
+Installo ⇒ Installing
+Installo il driver PawnIO… ⇒ Installing the PawnIO driver…
+Installo il profilo ⇒ Installing profile
+Installo LibreHardwareMonitor… ⇒ Installing LibreHardwareMonitor…
+Interrogo winget, attendi qualche secondo… ⇒ Querying winget, wait a few seconds…
+Invia a Microsoft solo i dati diagnostici indispensabili ⇒ Sends only essential diagnostic data to Microsoft
+Ioni di litio ⇒ Lithium-ion
+IP pubblico ⇒ Public IP
+irraggiungibile ⇒ unreachable
+L'attività automatica aggiornerà solo i programmi ⇒ The automatic task will update apps only
+L'attività automatica eseguirà la manutenzione completa ⇒ The automatic task will run the full maintenance
+L'ultimo backup ha più di 7 giorni: vai nella sezione Backup ⇒ The last backup is more than 7 days old: go to the Backup section
+L'uso del programma è gratuito, anche in ambito professionale. Non è consentito vendere, ridistribuire versioni modificate o presentare il programma come proprio senza l'autorizzazione scritta dell'autore. ⇒ The program is free to use, including professionally. Selling it, redistributing modified versions or presenting it as your own is not allowed without the author's written permission.
+La connessione verrà interrotta per qualche secondo e servirà un riavvio. Procedere? ⇒ The connection will drop for a few seconds and a restart will be needed. Proceed?
+La destinazione è sullo stesso disco di Windows: se il disco si guasta perdi anche il backup. Usarla comunque? ⇒ The destination is on the Windows disk: if the disk fails you lose the backup too. Use it anyway?
+La ricerca mostra solo file e app del PC (riavvio di Esplora risorse) ⇒ Search shows only files and apps on the PC (restarts Explorer)
+Le app non usano il tuo ID per gli annunci personalizzati ⇒ Apps don't use your ID for personalised ads
+Leggo le schede di rete… ⇒ Reading network adapters…
+lento ⇒ slow
+Lettura dei programmi all'avvio… ⇒ Reading startup apps…
+Lettura dei programmi installati… ⇒ Reading installed apps…
+Lettura dei punti di ripristino… ⇒ Reading restore points…
+Lettura dei sensori… ⇒ Reading sensors…
+Lettura del file… ⇒ Reading file…
+Lettura della cartella Installers… ⇒ Reading the Installers folder…
+Lettura della cronologia… ⇒ Reading history…
+Lettura delle impostazioni… ⇒ Reading settings…
+Licenza ⇒ License
+Log completo salvato in Dati\Logs ⇒ Full log saved in Dati\Logs
+Mai eseguito ⇒ Never run
+Manutenzione completa ⇒ Full maintenance
+Manutenzione: ⇒ Maintenance:
+Memoria RAM ⇒ RAM
+Memoria RAM · velocità ⇒ RAM · speed
+Memoria usata ⇒ Memory used
+Memoria video ⇒ Video memory
+Memoria… ⇒ Memory…
+Microsoft 365 (Office) app promozionale ⇒ Microsoft 365 (Office) promotional app
+Minidump e crash dump delle app ⇒ Minidumps and app crash dumps
+Misurato ⇒ Measured
+Misuro ⇒ Measuring
+Misuro il download (circa 12 secondi)… ⇒ Measuring download (about 12 seconds)…
+Misuro l'upload… ⇒ Measuring upload…
+Misuro le risposte… ⇒ Measuring response times…
+MODALITÀ ⇒ MODE
+Modello ⇒ Model
+Modulo ⇒ Module
+molto spazio ⇒ lots of space
+Monitor… ⇒ Monitors…
+Musica ⇒ Music
+MultiTool - Aggiornamento automatico ⇒ MultiTool - Automatic update
+MultiTool - Attenzione ⇒ MultiTool - Warning
+MultiTool - Manutenzione completata ⇒ MultiTool - Maintenance completed
+MultiTool è fornito «così com'è», senza garanzie di alcun tipo, esplicite o implicite, comprese quelle di funzionamento senza errori, di idoneità a uno scopo particolare e di compatibilità con uno specifico computer. ⇒ MultiTool is provided "as is", without warranties of any kind, express or implied, including error-free operation, fitness for a particular purpose and compatibility with a specific computer.
+MultiTool è stato disinstallato. ⇒ MultiTool has been uninstalled.
+MultiTool non include software di terze parti. Gli strumenti facoltativi (ad esempio LibreHardwareMonitor, licenza MPL-2.0, e il driver PawnIO) vengono scaricati dai canali ufficiali tramite winget solo dopo la tua conferma e sono regolati dalle rispettive licenze. I programmi installati con winget o dalle cartelle Installers e Profili sono soggetti alle licenze dei loro autori, che accetti al momento dell'installazione. ⇒ MultiTool does not include third-party software. Optional tools (for example LibreHardwareMonitor, MPL-2.0 license, and the PawnIO driver) are downloaded from official channels via winget only after your confirmation and are governed by their own licenses. Apps installed with winget or from the Installers and Profiles folders are subject to their authors' licenses, which you accept at installation.
+MultiTool non raccoglie, non registra e non invia all'autore alcun dato personale o informazione sul computer. Inventario hardware, cronologia, log, rapporti e impostazioni restano esclusivamente sul PC, nella cartella Dati. ⇒ MultiTool does not collect, record or send the author any personal data or information about the computer. Hardware inventory, history, logs, reports and settings stay only on the PC, in the Dati folder.
+MultiTool resta attivo qui. Doppio clic per riaprirlo. ⇒ MultiTool keeps running here. Double-click to reopen it.
+Necessario per BitLocker e Windows 11 ⇒ Required for BitLocker and Windows 11
+Nei limiti massimi consentiti dalla legge, l'autore non è responsabile di danni diretti o indiretti, perdita di dati, malfunzionamenti, interruzioni di attività o mancati guadagni derivanti dall'uso o dall'impossibilità di usare il programma. Restano salvi i casi di dolo o colpa grave (art. 1229 c.c.) e i diritti che la legge riconosce ai consumatori e che non possono essere esclusi. ⇒ To the maximum extent permitted by law, the author is not liable for direct or indirect damage, data loss, malfunctions, business interruption or lost profits arising from the use of or inability to use the program. Cases of wilful misconduct or gross negligence (art. 1229 of the Italian Civil Code) and consumer rights that cannot be excluded by law remain unaffected.
+Nella cartella non ci sono driver (.inf) ⇒ There are no drivers (.inf) in the folder
+Nessun aggiornamento di sistema in attesa. ⇒ No pending system updates.
+Nessun aggiornamento disponibile ⇒ No updates available
+Nessun dato nelle ultime 48 ore ⇒ No data in the last 48 hours
+Nessun dato: attiva "Registra temperature e ventole" in Impostazioni o tieni aperta la sezione Hardware ⇒ No data: enable "Log temperatures and fans" in Settings or keep the Hardware section open
+Nessun dispositivo con problemi ⇒ No devices with problems
+Nessun driver da segnalare ⇒ No driver issues
+Nessun errore ⇒ No errors
+Nessun installer trovato ⇒ No installers found
+Nessun log presente. ⇒ No logs yet.
+Nessun problema ⇒ No problems
+nessun problema ⇒ no problems
+Nessun problema e nessun driver di terze parti rilevato. ⇒ No problems and no third-party drivers found.
+Nessun profilo ⇒ No profiles
+Nessun programma ⇒ No apps
+Nessun programma all'avvio ⇒ No startup apps
+Nessun punto di ripristino ⇒ No restore points
+Nessun risultato ⇒ No results
+Nessuna cartella ⇒ No folders
+Nessuna connessione a internet ⇒ No internet connection
+Nessuna esclusione ⇒ No exclusions
+Nessuna operazione registrata ⇒ No recorded operations
+Nessuna rete connessa ⇒ No network connected
+Nessuna richiesta di feedback ⇒ No feedback requests
+nessuna risposta ⇒ no response
+Nessuno ⇒ None
+nessuno ⇒ none
+Niente app promosse e suggerimenti in Start ⇒ No promoted apps and suggestions in Start
+Niente da pulire ⇒ Nothing to clean
+Niente pubblicità nella schermata di blocco ⇒ No ads on the lock screen
+Niente risultati Bing nella ricerca di Start ⇒ No Bing results in Start search
+Niente suggerimenti basati sui tuoi dati diagnostici ⇒ No suggestions based on your diagnostic data
+Nome PC ⇒ PC name
+non applicato ⇒ not applied
+non attiva ⇒ not active
+non connesso ⇒ not connected
+non firmato ⇒ unsigned
+non funziona ⇒ not working
+Non ho trovato programmi disinstallabili. ⇒ No uninstallable apps found.
+Non pianificato ⇒ Not scheduled
+Non più disponibile ⇒ No longer available
+Non risolti ⇒ Not resolved
+non scelta (vai in Backup) ⇒ not chosen (go to Backup)
+non supportato ⇒ not supported
+Non trovato ⇒ Not found
+Notizie (Microsoft News) ⇒ News (Microsoft News)
+Numero di serie ⇒ Serial number
+Obsoleto e vulnerabile ⇒ Obsolete and vulnerable
+Operazione completata ⇒ Operation completed
+Operazione completata. ⇒ Done.
+Operazione in corso… ⇒ Operation in progress…
+Orario non valido: usa il formato HH:MM ⇒ Invalid time: use the HH:MM format
+Ore di accensione ⇒ Power-on hours
+Ottimizzazione recapito ⇒ Delivery Optimization
+ottimo ⇒ excellent
+Pacchetti di aggiornamento già installati ⇒ Already installed update packages
+Per funzionare il programma si collega a servizi esterni, che hanno proprie informative: GitHub (aggiornamenti di MultiTool), Microsoft (winget, Microsoft Store, Windows Update, Catalogo Microsoft Update), Cloudflare e ipify (test di velocità e IP pubblico, solo quando li avvii), cdnjs e jsDelivr (grafici e codici QR nei rapporti HTML). ⇒ To work, the program connects to external services with their own privacy policies: GitHub (MultiTool updates), Microsoft (winget, Microsoft Store, Windows Update, Microsoft Update Catalog), Cloudflare and ipify (speed test and public IP, only when you start them), cdnjs and jsDelivr (charts and QR codes in HTML reports).
+Per leggere temperature dei core, ventole e consumi serve un componente che accede ai sensori della scheda madre. ⇒ Reading core temperatures, fans and power draw requires a component that accesses the motherboard sensors.
+permessa ⇒ allowed
+PRECEDENTE ⇒ PREVIOUS
+Premi CREA PUNTO: verrà attivata anche la protezione sistema. ⇒ Press CREATE POINT: system protection will be enabled too.
+Prepara il PC per il cliente: scegli i passaggi e premi AVVIA. Dati del negozio in Impostazioni. ⇒ Prepare the PC for the customer: choose the steps and press START. Shop details are in Settings.
+Preparazione consegna ⇒ Delivery prep
+Preparo gli aggiornamenti selezionati… ⇒ Preparing the selected updates…
+Preparo le sezioni… ⇒ Preparing sections…
+presente ⇒ present
+problema ⇒ problem
+problemi non risolti ⇒ unresolved problems
+Processore ⇒ Processor
+Processore · compressione ⇒ Processor · compression
+Processore · crittografia AES ⇒ Processor · AES encryption
+Processore… ⇒ Processor…
+Produttore ⇒ Manufacturer
+Produttore (codice) ⇒ Manufacturer (code)
+Programmi aggiornati: ⇒ Apps updated:
+Programmi che non verranno mai aggiornati. ⇒ Apps that will never be updated.
+Programmi e funzionalità ⇒ Programs and Features
+pronto ⇒ ready
+Protezione in tempo reale ⇒ Real-time protection
+Protezione sistema disattivata o nessun punto disponibile: premi CREA PUNTO per attivarla. ⇒ System protection off or no points available: press CREATE POINT to enable it.
+Protocollo SMBv1 ⇒ SMBv1 protocol
+Pulisco ⇒ Cleaning
+Pulizia disco ⇒ Disk cleanup
+Pulizia: ⇒ Cleanup:
+Punti di ripristino ⇒ Restore points
+Punto di ripristino ⇒ Restore point
+Punto di ripristino creato ⇒ Restore point created
+Punto di ripristino non creato (Protezione sistema disattivata?) ⇒ Restore point not created (System Protection off?)
+Qualcosa è andato storto ⇒ Something went wrong
+Qualità del segnale ⇒ Signal quality
+Questa sezione ha bisogno di internet. Collegati e premi F5 o Ricarica. ⇒ This section needs the internet. Connect and press F5 or Reload.
+Qui troverai aggiornamenti, installazioni e pulizie eseguite. ⇒ Updates, installs and cleanups will appear here.
+Raccolgo le informazioni… ⇒ Collecting information…
+Rapporto di consegna ⇒ Delivery report
+Reinstalla dallo Store ⇒ Reinstall from the Store
+Reinstallata ⇒ Reinstalled
+Reinstallo i driver dal backup… ⇒ Reinstalling drivers from the backup…
+Report di errore di Windows ⇒ Windows error reports
+Rete ⇒ Network
+Rete e audio… ⇒ Network and audio…
+Revisione ⇒ Revision
+Riavvia il PC ⇒ Restart the PC
+Riavviare il computer adesso? Salva prima il lavoro aperto. ⇒ Restart the computer now? Save your open work first.
+Riavvio richiesto ⇒ Restart required
+Riavvio… ⇒ Restarting…
+Ricarica ⇒ Reload
+Ricerca aggiornamenti di Windows… ⇒ Searching for Windows updates…
+Ricerca Bing ⇒ Bing Search
+Ricerca di nuovo ⇒ Search again
+Rimossa ⇒ Removed
+Rimosso ⇒ Removed
+Rimuovi app preinstallate inutili ⇒ Remove useless preinstalled apps
+Rimuovo ⇒ Removing
+Ripara connessione ⇒ Repair connection
+Riparato ⇒ Repaired
+Riparazione ⇒ Repair
+Riparazione di sistema ⇒ System repair
+Ripristina driver da backup ⇒ Restore drivers from backup
+Ripristinato ⇒ Restored
+Ripristino ⇒ Restoring
+Ripristino driver da backup ⇒ Driver restore from backup
+Ripristino immagine di Windows (DISM) ⇒ Windows image repair (DISM)
+Risoluzione ⇒ Resolution
+Risoluzione nomi (DNS) ⇒ Name resolution (DNS)
+Saltato ⇒ Skipped
+Salute ⇒ Health
+Scansione… ⇒ Scanning…
+Scegli destinazione ⇒ Choose destination
+Scegli dove salvare il backup (disco esterno, chiavetta o cartella di rete) ⇒ Choose where to save the backup (external drive, USB stick or network folder)
+Scegli i passaggi e premi AVVIA: verranno eseguiti uno dopo l'altro, alla fine trovi il rapporto. ⇒ Choose the steps and press START: they run one after another, with a report at the end.
+Scegli la cartella di backup dei driver (Dati\DriverBackup\data) ⇒ Choose the driver backup folder (Dati\DriverBackup\date)
+Scegli prima la destinazione (disco esterno o cartella di rete) con il pulsante in alto. ⇒ First choose the destination (external drive or network folder) with the button at the top.
+Scegli prima la destinazione nella sezione Backup ⇒ First choose the destination in the Backup section
+Scheda madre ⇒ Motherboard
+Scheda madre e firmware ⇒ Motherboard and firmware
+Scheda madre e firmware… ⇒ Motherboard and firmware…
+Scheda video ⇒ Graphics card
+Scheda video… ⇒ Graphics card…
+Scrivi un nome, ad esempio "vlc", "firefox" o "7zip", e premi Invio. ⇒ Type a name, e.g. "vlc", "firefox" or "7zip", and press Enter.
+Segnalazioni errori ⇒ Error reports
+Seleziona prima i programmi da escludere ⇒ Select the apps to exclude first
+Seleziona un solo punto di ripristino ⇒ Select a single restore point
+Sensori avanzati attivati ⇒ Advanced sensors enabled
+Sensori avanzati: attivi ⇒ Advanced sensors: on
+Seriale scheda ⇒ Board serial
+Server Cloudflare più vicino ⇒ Nearest Cloudflare server
+Si attiva dal firmware UEFI ⇒ Enabled from the UEFI firmware
+Sicurezza ⇒ Security
+Sicurezza di Windows ⇒ Windows Security
+silenziosa ⇒ silent
+Sistema ⇒ System
+Sistema operativo ⇒ Operating system
+Sistema… ⇒ System…
+Slot occupati ⇒ Slots used
+Software di terze parti e marchi ⇒ Third-party software and trademarks
+Solitaire Collection ⇒ Solitaire Collection
+STATO ⇒ STATUS
+Stato ⇒ Status
+Storico sensori ⇒ Sensor history
+Suggerimenti ⇒ Tips
+Svuota definitivamente il cestino ⇒ Permanently empty the Recycle Bin
+Svuotare la cronologia? ⇒ Clear history?
+Telemetria al minimo ⇒ Minimum telemetry
+Telemetria minima, niente pubblicità e suggerimenti ⇒ Minimum telemetry, no ads and suggestions
+Temperatura ⇒ Temperature
+Temporanei e cache degli aggiornamenti ⇒ Temporary files and update cache
+Temporanei, cache di Windows Update, report errori e dump ⇒ Temporary files, Windows Update cache, error reports and dumps
+Test di Windows (WinSAT): circa 1-3 minuti in tutto. Chiudi gli altri programmi per risultati affidabili. ⇒ Windows tests (WinSAT): about 1-3 minutes in total. Close other apps for reliable results.
+TEST VELOCITÀ ⇒ SPEED TEST
+Test velocità ⇒ Speed test
+TEST VELOCITÀ misura download e upload; RIPARA CONNESSIONE azzera la configurazione di rete di Windows. ⇒ SPEED TEST measures download and upload; REPAIR CONNECTION resets the Windows network configuration.
+Test velocità: Cloudflare ⇒ Speed test: Cloudflare
+TIPO ⇒ TYPE
+Tipo ⇒ Type
+Totale ⇒ Total
+Tutte le sezioni sono pronte ⇒ All sections ready
+Tutti gli aggiornamenti winget e Microsoft Store, escluse le esclusioni ⇒ All winget and Microsoft Store updates, except excluded ones
+Tutto aggiornato ⇒ All up to date
+Tutto ok ⇒ All good
+UEFI  ·  Secure Boot attivo ⇒ UEFI  ·  Secure Boot on
+UEFI  ·  Secure Boot disattivo ⇒ UEFI  ·  Secure Boot off
+Ultima scansione rapida ⇒ Last quick scan
+Ultimo aggiornamento di Windows ⇒ Last Windows update
+Un'operazione è in corso: chiudendo ora potresti lasciare un'installazione a metà. Chiudere comunque? ⇒ An operation is in progress: closing now could leave an installation half-done. Close anyway?
+Usura ⇒ Wear
+Va lasciato disattivato ⇒ Should stay disabled
+VALORE ⇒ VALUE
+VARIAZIONE ⇒ CHANGE
+VELOCITÀ ⇒ SPEED
+Velocità download ⇒ Download speed
+Velocità upload ⇒ Upload speed
+Ventola ⇒ Fan
+Verrà ricreata automaticamente ⇒ Will be recreated automatically
+Video ⇒ Videos
+Virtualizzazione ⇒ Virtualization
+Windows è aggiornato ⇒ Windows is up to date
+Windows espone solo alcuni sensori (zone termiche, dischi, carico). Per temperature dei core, ventole e consumi premi "Attiva sensori avanzati". ⇒ Windows exposes only a few sensors (thermal zones, disks, load). For core temperatures, fans and power draw press "Enable advanced sensors".
+Windows non chiede più valutazioni e opinioni ⇒ Windows stops asking for ratings and opinions
+Windows non registra né invia le attività svolte ⇒ Windows does not record or send your activities
+Windows parte già leggero. ⇒ Windows already starts light.
+Windows Update: ⇒ Windows Update:
+Windows, Microsoft Store, Microsoft Defender e winget sono marchi di Microsoft Corporation. Intel, NVIDIA, AMD e gli altri nomi di prodotti e aziende citati sono marchi dei rispettivi titolari. MultiTool è un progetto indipendente, non affiliato né approvato da questi soggetti. ⇒ Windows, Microsoft Store, Microsoft Defender and winget are trademarks of Microsoft Corporation. Intel, NVIDIA, AMD and other product and company names mentioned are trademarks of their respective owners. MultiTool is an independent project, not affiliated with or endorsed by them.
+winget e Microsoft Store ⇒ winget and Microsoft Store
+winget non ha trovato aggiornamenti disponibili. ⇒ winget found no available updates.
+winget non trovato: installa "Programma di installazione app" dal Microsoft Store ⇒ winget not found: install "App Installer" from the Microsoft Store
+WinSAT · strumento di Windows ⇒ WinSAT · Windows tool
+Zona termica ⇒ Thermal zone
+Integro ⇒ Healthy
+Guasto ⇒ Failed
+Sconosciuto ⇒ Unknown
+Attenzione ⇒ Warning
+Buona ⇒ Good
+Usurata ⇒ Worn
+Da sostituire ⇒ Replace
+Portatile ⇒ Laptop
+Piombo ⇒ Lead-acid
+Nichel-cadmio ⇒ Nickel-cadmium
+Nichel-metallo idruro ⇒ Nickel-metal hydride
+Litio-polimero ⇒ Lithium-polymer
+Presente ⇒ Present
+Assente ⇒ Absent
+Attiva ⇒ On
+Disattivata ⇒ Off
+Non rilevata ⇒ Not detected
+Antivirus di terze parti? ⇒ Third-party antivirus?
+Prima di iniziare ⇒ Before you start
+Leggi le condizioni d'uso qui sotto. MultiTool modifica impostazioni di sistema, installa e rimuove programmi: per usarlo devi accettarle. ⇒ Read the terms of use below. MultiTool changes system settings, installs and removes apps: you must accept them to use it.
+Accetto ⇒ I accept
+Non accetto ed esco ⇒ I don't accept, exit
+Privacy ⇒ Privacy
+Filtra l'elenco… ⇒ Filter the list…
+Esporta CSV ⇒ Export CSV
+Cerca una sezione o un comando… ⇒ Search for a section or command…
+Invio per aprire  ·  Esc per chiudere  ·  F5 ricarica  ·  Ctrl+H Home ⇒ Enter to open  ·  Esc to close  ·  F5 reload  ·  Ctrl+H Home
+Esporta configurazione ⇒ Export configuration
+Importa configurazione ⇒ Import configuration
+Esegui la manutenzione completa (anche Windows Update e pulizia) ⇒ Run the full maintenance (also Windows Update and cleanup)
+Apri MultiTool ⇒ Open MultiTool
+Esci ⇒ Exit
+Antivirus Microsoft Defender disattivato ⇒ Microsoft Defender antivirus disabled
+Creazione non riuscita: la protezione sistema potrebbe essere disattivata ⇒ Creation failed: System Protection may be disabled
+Destinazione del backup non disponibile: collega il disco o sceglila di nuovo ⇒ Backup destination not available: connect the drive or choose it again
+il file non è una configurazione di MultiTool ⇒ the file is not a MultiTool configuration
+il file scaricato contiene errori ⇒ the downloaded file contains errors
+il file scaricato non corrisponde alla versione annunciata ⇒ the downloaded file does not match the announced version
+Questo software ⇒ This software
+{0} aggiornamenti disponibili ⇒ {0} updates available
+{0} aggiornamenti disponibili. Clicca per vederli. ⇒ {0} updates available. Click to see them.
+{0} aggiornamenti disponibili. I facoltativi non sono selezionati. ⇒ {0} updates available. Optional ones are not selected.
+{0} aggiornati ⇒ {0} updated
+{0} aggiornati, {1} errori ⇒ {0} updated, {1} errors
+{0} componenti rilevati  ·  i valori si possono selezionare e copiare ⇒ {0} components found  ·  values can be selected and copied
+{0} core  ·  {1} thread ⇒ {0} cores  ·  {1} threads
+{0} di {1} completati ⇒ {0} of {1} completed
+{0} di {1} installati ⇒ {0} of {1} installed
+{0} di {1} ⇒ {0} of {1}
+{0} dispositivi con problemi: apri la sezione Driver ⇒ {0} devices with problems: open the Drivers section
+{0} driver di terze parti  ·  {1} dispositivi con problemi  ·  {2} non firmati  ·  {3} oltre 5 anni ⇒ {0} third-party drivers  ·  {1} devices with problems  ·  {2} unsigned  ·  {3} older than 5 years
+{0} elementi elaborati ⇒ {0} items processed
+{0} elementi non mostrati per un errore ⇒ {0} items not shown due to an error
+{0} elementi. ⇒ {0} items.
+{0} file copiati ⇒ {0} files copied
+{0} impostazioni applicate ⇒ {0} settings applied
+{0} installati ⇒ {0} installed
+{0} installer nella cartella. Per gli .exe silenziosi crea un file nome.exe.args con i parametri. ⇒ {0} installers in the folder. For silent .exe installs create a name.exe.args file with the parameters.
+{0} liberi di {1} ⇒ {0} free of {1}
+{0} non corretti ⇒ {0} uncorrected
+{0} ore ⇒ {0} hours
+{0} pacchetti nell'elenco importato. ⇒ {0} packages in the imported list.
+{0} pollici ⇒ {0} inches
+{0} programmi aggiornati ⇒ {0} apps updated
+{0} programmi all'avvio, {1} attivi. Seleziona e scegli ATTIVA o DISATTIVA. ⇒ {0} startup apps, {1} enabled. Select and choose ENABLE or DISABLE.
+{0} programmi e app installati. ⇒ {0} programs and apps installed.
+{0} programmi esclusi dagli aggiornamenti ⇒ {0} apps excluded from updates
+{0} punti di ripristino. Per tornare indietro selezionane UNO e premi RIPRISTINA (il PC si riavvia). ⇒ {0} restore points. To go back select ONE and press RESTORE (the PC restarts).
+{0} risultati per "{1}". ⇒ {0} results for "{1}".
+{0} app rimosse ⇒ {0} apps removed
+{0} rimosse ⇒ {0} removed
+{0} errori ⇒ {0} errors
+{0} giorni ⇒ {0} days
+{0} giorni fa ⇒ {0} days ago
+{0} pacchetti ⇒ {0} packages
+{0} problemi ⇒ {0} problems
+{0} file ⇒ {0} files
+{0}  ·  acceso da {1} ⇒ {0}  ·  up for {1}
+{0}  ·  app Microsoft Store ⇒ {0}  ·  Microsoft Store app
+{0}  ·  del {1} ⇒ {0}  ·  from {1}
+{0}  ·  esclusi quelli delle ultime 24 ore ⇒ {0}  ·  except those from the last 24 hours
+{0}  ·  reinstallabile dal Microsoft Store ⇒ {0}  ·  reinstallable from the Microsoft Store
+{0} del {1} ⇒ {0} of {1}
+{0}  ·  versione {1} ⇒ {0}  ·  version {1}
+{0} × {1} a {2} Hz ⇒ {0} × {1} at {2} Hz
+{0} °C (max {1} °C) ⇒ {0} °C (max {1} °C)
+{0}  ·  {1}  ·  MAC {2}  ·  driver {3} ⇒ {0}  ·  {1}  ·  MAC {2}  ·  driver {3}
+© {0} {1}. Tutti i diritti riservati. ⇒ © {0} {1}. All rights reserved.
+Aggiornamento non riuscito: {0} ⇒ Update failed: {0}
+Aggiornare MultiTool alla versione {0}? Il programma verrà riavviato. ⇒ Update MultiTool to version {0}? The program will restart.
+Aggiornate il {0} ⇒ Updated on {0}
+Aggiornato da {0} ⇒ Updated from {0}
+Aggiorno MultiTool alla versione {0}… ⇒ Updating MultiTool to version {0}…
+Backup automatico ogni giorno alle {0} ⇒ Automatic backup every day at {0}
+Backup completato con {0} errori ⇒ Backup completed with {0} errors
+Backup completato: {0} file nuovi o modificati ⇒ Backup completed: {0} new or changed files
+Backup driver non riuscito: {0} ⇒ Driver backup failed: {0}
+Backup in {0} ⇒ Backup in {0}
+Batteria: capacità al {0}% ⇒ Battery: capacity at {0}%
+Calcolo: {0}… ⇒ Measuring: {0}…
+Carica {0}% ⇒ Charge {0}%
+Cerco "{0}" nel catalogo… ⇒ Searching "{0}" in the catalog…
+chkdsk {0} /scan  ·  sola lettura ⇒ chkdsk {0} /scan  ·  read-only
+Codice {0} ⇒ Code {0}
+Codice errore {0}  ·  {1} ⇒ Error code {0}  ·  {1}
+Conservare i dati (impostazioni, cronologia, rapporti, installer e profili) in {0}\MultiTool? ⇒ Keep the data (settings, history, reports, installers and profiles) in {0}\MultiTool?
+Crittografia disco {0} ⇒ Disk encryption {0}
+da {0} ⇒ from {0}
+Destinazione: {0}  ·  ultimo backup: {1} ⇒ Destination: {0}  ·  last backup: {1}
+Destinazione: {0}\MultiTool-Backup\{1}  ·  copia solo i file nuovi o modificati, non cancella nulla ⇒ Destination: {0}\MultiTool-Backup\{1}  ·  copies only new or changed files, never deletes anything
+Disco {0} ⇒ Disk {0}
+Disco {0} · lettura casuale ⇒ Disk {0} · random read
+Disco {0} · lettura sequenziale ⇒ Disk {0} · sequential read
+Disco {0} · scrittura sequenziale ⇒ Disk {0} · sequential write
+Disco {0}: {1} °C ⇒ Disk {0}: {1} °C
+Disco {0}: solo {1} liberi ⇒ Disk {0}: only {1} free
+Disco {0}: stato {1} ⇒ Disk {0}: status {1}
+Disco {0}: usura {1}% ⇒ Disk {0}: wear {1}%
+Download {0} Mbit/s  ·  upload {1} Mbit/s ⇒ Download {0} Mbit/s  ·  upload {1} Mbit/s
+Download {0}% ⇒ Download {0}%
+Driver reinstallati dal backup ({0} pacchetti) ⇒ Drivers reinstalled from the backup ({0} packages)
+È disponibile MultiTool {0}: vai in Impostazioni per aggiornare ⇒ MultiTool {0} is available: go to Settings to update
+Errore pianificazione: {0} ⇒ Scheduling error: {0}
+Errore robocopy {0} ⇒ Robocopy error {0}
+Errore sensori: {0} ⇒ Sensor error: {0}
+Errore: {0} ⇒ Error: {0}
+Errore {0} ⇒ Error {0}
+Esegui {0} {1}… ⇒ Running {0} {1}…
+Eseguo {0} {1}… ⇒ Running {0} {1}…
+Esito {0} ⇒ Result {0}
+Esportato: {0} ⇒ Exported: {0}
+Firewall · profilo {0} ⇒ Firewall · {0} profile
+Firme del {0} ⇒ Signatures from {0}
+fonte: {0}  ·  aggiornamento ogni 2 s ⇒ source: {0}  ·  refresh every 2 s
+Importazione non riuscita: {0} ⇒ Import failed: {0}
+In corso {0}% ⇒ In progress {0}%
+In esecuzione da {0} (versione portatile) ⇒ Running from {0} (portable version)
+Installa profilo: {0} ⇒ Install profile: {0}
+Installato in {0}  ·  dati in {1} ⇒ Installed in {0}  ·  data in {1}
+Installazione non riuscita: {0} ⇒ Installation failed: {0}
+Installo {0} aggiornamenti… ⇒ Installing {0} updates…
+Installo {0}… ⇒ Installing {0}…
+Liberati {0} ⇒ Freed {0}
+locale: {0} ⇒ local: {0}
+MultiTool - Manutenzione: {0} passaggi da verificare ⇒ MultiTool - Maintenance: {0} steps to check
+MultiTool {0}  ·  Ctrl+K per cercare ⇒ MultiTool {0}  ·  Ctrl+K to search
+Pianificazione backup non riuscita: {0} ⇒ Backup scheduling failed: {0}
+Prossima esecuzione: {0} ⇒ Next run: {0}
+Pulisco: {0}… ⇒ Cleaning: {0}…
+Punteggio sicurezza: {0}/100  ·  {1} controlli superati su {2}. Seleziona i problemi e premi CORREGGI. ⇒ Security score: {0}/100  ·  {1} of {2} checks passed. Select the problems and press FIX.
+Punto n. {0} ⇒ Point no. {0}
+Rimuovi app: {0} ⇒ Remove app: {0}
+Rimuovo {0}… ⇒ Removing {0}…
+Ripristino a: {0} ⇒ Restore to: {0}
+Ripristino driver: codice {0} ⇒ Driver restore: code {0}
+Scarico {0} aggiornamenti… ⇒ Downloading {0} updates…
+Scarico {0}… ⇒ Downloading {0}…
+Sensori avanzati non disponibili: {0} ⇒ Advanced sensors not available: {0}
+Spazio liberato: {0} ⇒ Space freed: {0}
+Spazio recuperabile: {0} ⇒ Reclaimable space: {0}
+Stai usando l'account amministratore {0}: avvio automatico e file temporanei riguardano quell'account, non {1} ⇒ You are using the administrator account {0}: startup apps and temporary files refer to that account, not {1}
+Trovati {0} aggiornamenti. Controlla l'elenco, poi scegli se procedere. ⇒ Found {0} updates. Review the list, then choose whether to proceed.
+Ultime {0} operazioni. ⇒ Last {0} operations.
+Ultimo test: {0} ⇒ Last test: {0}
+usura {0}% ⇒ wear {0}%
+Versione {0} ⇒ Version {0}
+Versione installata: {0}  ·  controllo in corso… ⇒ Installed version: {0}  ·  checking…
+Versione installata: {0}  ·  controllo non riuscito: {1} ⇒ Installed version: {0}  ·  check failed: {1}
+Versione installata: {0}  ·  disponibile la {1} ⇒ Installed version: {0}  ·  {1} available
+Versione installata: {0}  ·  è la più recente ⇒ Installed version: {0}  ·  up to date
+Versione installata: {0}  ·  nessun indirizzo di aggiornamento impostato ⇒ Installed version: {0}  ·  no update address set
+Versione {0}  ·  rilasciata il {1}  ·  creato da {2} ⇒ Version {0}  ·  released on {1}  ·  created by {2}
+Versione {0}  ·  creato da {1} ⇒ Version {0}  ·  created by {1}
+MultiTool {0}  ·  {1}  ·  creato da {2}  ·  © {3} ⇒ MultiTool {0}  ·  {1}  ·  created by {2}  ·  © {3}
+Wi-Fi: {0} ⇒ Wi-Fi: {0}
+winget: {0} ⇒ winget: {0}
+Aggiorno {0}… ⇒ Updating {0}…
+Disinstallo {0}… ⇒ Uninstalling {0}…
+Copio {0}… ⇒ Copying {0}…
+Misuro {0}… ⇒ Measuring {0}…
+Correggo {0}… ⇒ Fixing {0}…
+Applico {0}… ⇒ Applying {0}…
+Ripristino {0}… ⇒ Restoring {0}…
+Installo il profilo {0}… ⇒ Installing profile {0}…
+Installo con SDIO {0}… ⇒ Installing {0}…
+Disattivo {0}… ⇒ Disabling {0}…
+Attivo {0}… ⇒ Enabling {0}…
+Pulisco {0}… ⇒ Cleaning {0}…
+Eseguo {0}… ⇒ Running {0}…
+Scarico e installo… ⇒ Downloading and installing…
+{0} › {1} ⇒ {0} › {1}
+{0} con errori ⇒ {0} with errors
+{0} completati ⇒ {0} completed
+{0} / {1} selezionati ⇒ {0} / {1} selected
+~ completati ⇒  completed
+~ con errori ⇒  with errors
+~ annullati ⇒  cancelled
+~  ·  dati delle ⇒   ·  data from
+~ selezionati ⇒  selected
+~Programmi aggiornati: ⇒ Apps updated:
+~Manutenzione: ⇒ Maintenance:
+~Pulizia: ⇒ Cleanup:
+~ mai ⇒  never
+Per leggere temperature dei core, ventole e consumi serve un componente che accede ai sensori della scheda madre.\n\nVerranno installati tramite winget:\n- LibreHardwareMonitor (open source)\n- PawnIO, il driver firmato che usa per leggere i sensori\n\nProcedere? ⇒ Reading core temperatures, fans and power draw requires a component that accesses the motherboard sensors.\n\nThe following will be installed via winget:\n- LibreHardwareMonitor (open source)\n- PawnIO, the signed driver it uses to read the sensors\n\nProceed?
+Sul disco {0} restano solo {1} liberi: aggiornamenti e installazioni potrebbero non riuscire. Conviene prima fare una Pulizia disco.\n\nContinuare comunque? ⇒ Only {1} free on {0}. Updates and installations may fail: run a Disk cleanup first.\n\nContinue anyway?
+MultiTool è installato in {0}, con collegamenti nel menu Start e sul desktop.\n\nAprire ora la versione installata? ⇒ MultiTool is installed in {0}, with shortcuts in the Start menu and on the desktop.\n\nOpen the installed version now?
+Il PC verrà riportato allo stato del punto selezionato e si RIAVVIERÀ SUBITO. I tuoi file personali non vengono toccati, ma programmi e driver installati dopo verranno rimossi. Salva il lavoro aperto. Procedere? ⇒ The PC will be returned to the selected point and will RESTART IMMEDIATELY. Your personal files are not touched, but apps and drivers installed afterwards will be removed. Save your open work. Proceed?
+MultiTool è già aperto (controlla anche l'area di notifica). ⇒ MultiTool is already open (check the notification area too).
+dati delle {0} ⇒ data from {0}
+'@
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml
+if (-not ('MtTr' -as [type])) {
+    $refs = @([Windows.MessageBox].Assembly.Location, [Windows.DependencyObject].Assembly.Location, [Windows.UIElement].Assembly.Location,
+              [System.Xaml.XamlSchemaContext].Assembly.Location, [System.ComponentModel.INotifyPropertyChanged].Assembly.Location)
+    Add-Type -TypeDefinition $MtCs -ReferencedAssemblies $refs
+}
+[MtTr]::Load($TrTable)
+[MtTr]::On = ((Get-Settings).Lang -eq 'en')
+
+# ============================================================
 #  MODALITÀ AUTOMATICA (attività pianificata)
 # ============================================================
 if ($Auto) {
     $sync = @{}
     $S = Get-Settings
     if ($S.Restore) { [void](New-RestorePoint 'MultiTool - Aggiornamento automatico') }
+    if ($S.AutoFull) {
+        $area = 'Manutenzione automatica'
+        $res = foreach ($k in 'upd', 'wu', 'clean', 'drv') {
+            $it = [pscustomobject]@{ Key = $k; Name = $k; Sub = ''; Status = ''; StatusKind = 'none' }
+            try { Invoke-MaintStep $it } catch { $it.StatusKind = 'err'; $it.Status = $_.Exception.Message }
+            Add-History $area $(switch ($k) { 'upd' { 'Aggiorna programmi' } 'wu' { 'Windows Update' } 'clean' { 'Pulizia disco' } 'drv' { 'Controllo driver' } }) $it.Status $it.StatusKind
+            $it
+        }
+        $bad = @($res | Where-Object { $_.StatusKind -eq 'err' }).Count
+        $msg = ($res | ForEach-Object { $_.Sub } | Where-Object { $_ }) -join ' · '
+        if ($sync.Reboot) { $msg += ' - riavvio consigliato' }
+        Show-Toast $(if ($bad) { "MultiTool - Manutenzione: $bad passaggi da verificare" } else { 'MultiTool - Manutenzione completata' }) $msg
+        exit
+    }
     $excl = Read-Exclusions
     Start-StoreScan
     $ok = 0; $err = 0
@@ -845,8 +1687,8 @@ if ($Backup) {
 # ============================================================
 if ($Uninstall) {
     Add-Type -AssemblyName PresentationFramework
-    if ([Windows.MessageBox]::Show('Disinstallare MultiTool da questo PC?', 'MultiTool', 'YesNo', 'Question') -ne 'Yes') { exit }
-    $keepData = [Windows.MessageBox]::Show("Conservare i dati (impostazioni, cronologia, rapporti, installer e profili) in $env:ProgramData\MultiTool?", 'MultiTool', 'YesNo', 'Question') -eq 'Yes'
+    if ([MtTr]::Msg('Disinstallare MultiTool da questo PC?', 'MultiTool', 'YesNo', 'Question') -ne 'Yes') { exit }
+    $keepData = [MtTr]::Msg("Conservare i dati (impostazioni, cronologia, rapporti, installer e profili) in $env:ProgramData\MultiTool?", 'MultiTool', 'YesNo', 'Question') -eq 'Yes'
     Get-ScheduledTask -TaskName 'MultiTool*' -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
     Get-NetFirewallRule -DisplayName 'MultiTool*' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
     foreach ($d in [Environment]::GetFolderPath('CommonPrograms'), [Environment]::GetFolderPath('CommonDesktopDirectory')) { Remove-Item (Join-Path $d 'MultiTool.lnk') -Force -ErrorAction SilentlyContinue }
@@ -854,7 +1696,7 @@ if ($Uninstall) {
     $target = Join-Path $env:ProgramFiles 'MultiTool'
     $cmd = "timeout /t 3 /nobreak >nul & rmdir /s /q `"$target`"" + $(if (-not $keepData) { " & rmdir /s /q `"$env:ProgramData\MultiTool`"" } else { '' })
     Start-Process cmd.exe -ArgumentList "/c $cmd" -WindowStyle Hidden
-    [void][Windows.MessageBox]::Show('MultiTool è stato disinstallato.', 'MultiTool', 'OK', 'Information')
+    [void][MtTr]::Msg('MultiTool è stato disinstallato.', 'MultiTool', 'OK', 'Information')
     exit
 }
 
@@ -864,6 +1706,7 @@ Add-Type -Name Win -Namespace Native -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr h, int n);
 '@
 [void][Native.Win]::ShowWindow([Native.Win]::GetConsoleWindow(), 0)
+Add-Type -Name Power -Namespace NativePow -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'
 
 # --- Identità propria sulla barra delle applicazioni (altrimenti Windows mostra l'icona di PowerShell) ---
 Add-Type -Name Shell -Namespace NativeApp -MemberDefinition @'
@@ -875,8 +1718,9 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 
 # --- Istanza unica ---
 $Mutex = New-Object Threading.Mutex($false, 'Local\MultiTool2026')
+$ShowEvt = New-Object Threading.EventWaitHandle($false, [Threading.EventResetMode]::AutoReset, 'Local\MultiTool2026.Show')
 if (-not $Mutex.WaitOne(0)) {
-    [void][Windows.MessageBox]::Show('MultiTool è già aperto (controlla anche l''area di notifica).', 'MultiTool', 'OK', 'Information')
+    [void]$ShowEvt.Set()
     exit
 }
 $Settings = Get-Settings
@@ -896,34 +1740,6 @@ function Apply-Theme([string]$Text) {
     [regex]::Replace($Text, '#[0-9A-Fa-f]{6}(?![0-9A-Fa-f])', { param($m) $k = $m.Value.ToUpper(); if ($ThemeMap.ContainsKey($k)) { $ThemeMap[$k] } else { $m.Value } })
 }
 
-Add-Type -TypeDefinition @'
-using System.ComponentModel;
-using System.Collections.Generic;
-public class MtItem : INotifyPropertyChanged {
-    public event PropertyChangedEventHandler PropertyChanged;
-    readonly Dictionary<string, object> v = new Dictionary<string, object>();
-    object G(string n, object d) { lock (v) { object o; return v.TryGetValue(n, out o) ? o : d; } }
-    void S(string n, object val) {
-        lock (v) { v[n] = val; }
-        var h = PropertyChanged; if (h != null) h(this, new PropertyChangedEventArgs(n));
-    }
-    public bool   Selected   { get { return (bool)G("Selected", false); }   set { S("Selected", value); } }
-    public bool   Editable   { get { return (bool)G("Editable", true); }    set { S("Editable", value); } }
-    public bool   Checkable  { get { return (bool)G("Checkable", true); }   set { S("Checkable", value); } }
-    public bool   Arrow      { get { return (bool)G("Arrow", false); }      set { S("Arrow", value); } }
-    public string Name       { get { return (string)G("Name", ""); }        set { S("Name", value); } }
-    public string Sub        { get { return (string)G("Sub", ""); }         set { S("Sub", value); } }
-    public string C1         { get { return (string)G("C1", ""); }          set { S("C1", value); } }
-    public string C2         { get { return (string)G("C2", ""); }          set { S("C2", value); } }
-    public string Tag        { get { return (string)G("Tag", ""); }         set { S("Tag", value); } }
-    public string TagKind    { get { return (string)G("TagKind", "none"); } set { S("TagKind", value); } }
-    public string Status     { get { return (string)G("Status", ""); }      set { S("Status", value); } }
-    public string StatusKind { get { return (string)G("StatusKind", "none"); } set { S("StatusKind", value); } }
-    public string Glyph      { get { return (string)G("Glyph", ""); }       set { S("Glyph", value); } }
-    public string Key        { get { return (string)G("Key", ""); }         set { S("Key", value); } }
-    public object Data       { get { return G("Data", null); }              set { S("Data", value); } }
-}
-'@
 
 
 # ============================================================
@@ -1389,6 +2205,7 @@ $xaml = @'
             <StackPanel Margin="6,14,0,14">
               <TextBlock x:Name="HHello" FontSize="40" FontWeight="Bold" Foreground="{StaticResource Accent}"/>
               <TextBlock x:Name="HSub" FontSize="15" Foreground="#9AA0B8" Margin="0,4,0,0" Text="Raccolgo le informazioni sul sistema…"/>
+              <TextBlock x:Name="HLast" FontSize="12.5" Foreground="#6B7290" Margin="0,6,0,0" TextWrapping="Wrap"/>
             </StackPanel>
 
             <UniformGrid Grid.Row="1" Columns="4">
@@ -1532,6 +2349,10 @@ $xaml = @'
               </StackPanel>
             </Grid>
 
+            <Grid x:Name="LFilterBox" Grid.Row="1" Margin="0,14,0,0" Visibility="Collapsed" HorizontalAlignment="Left" Width="340">
+              <TextBox x:Name="LFilter" Style="{StaticResource Input}" FontSize="13"/>
+              <TextBlock x:Name="LFilterHint" Text="Filtra l'elenco…" Foreground="#5C6278" FontSize="13" Margin="14,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+            </Grid>
             <Grid x:Name="LSearchBox" Grid.Row="1" Margin="0,16,0,0" Visibility="Collapsed">
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
@@ -1618,6 +2439,7 @@ $xaml = @'
             <Grid Grid.Row="5" Margin="0,12,0,0">
               <TextBlock x:Name="LSummary" VerticalAlignment="Center" Foreground="#9AA0B8" FontSize="13"/>
               <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="LCsv" Style="{StaticResource LinkBtn}" Content="Esporta CSV" Visibility="Collapsed" Margin="0,0,4,0"/>
                 <Button x:Name="LReport" Style="{StaticResource LinkBtn}" Content="Apri rapporto" Visibility="Collapsed" Margin="0,0,10,0"/>
                 <Button x:Name="LCancel" Style="{StaticResource GhostBtn}" Content="ANNULLA" MinWidth="140" Margin="0,0,10,0"/>
                 <Button x:Name="LGo2" Style="{StaticResource GhostBtn}" MinWidth="140" Margin="0,0,10,0"/>
@@ -1775,6 +2597,7 @@ $xaml = @'
                   <StackPanel>
                     <TextBlock Text="AGGIORNAMENTO AUTOMATICO" Style="{StaticResource CardLabel}"/>
                     <CheckBox x:Name="SetAuto" Style="{StaticResource Switch}" Margin="0,16,0,0" FontSize="14" Content="Aggiorna i programmi ogni settimana"/>
+                    <CheckBox x:Name="SetAutoFull" Style="{StaticResource Switch}" Margin="0,12,0,0" FontSize="14" Content="Esegui la manutenzione completa (anche Windows Update e pulizia)"/>
                     <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
                       <RadioButton x:Name="SetD1" Style="{StaticResource DayPill}" Content="L" Tag="Monday"/>
                       <RadioButton x:Name="SetD2" Style="{StaticResource DayPill}" Content="M" Tag="Tuesday"/>
@@ -1799,6 +2622,8 @@ $xaml = @'
                       <Button x:Name="SetExcl" Style="{StaticResource GhostBtn}" Content="Esclusioni" Padding="16,8" FontSize="13" Margin="0,0,8,8"/>
                       <Button x:Name="SetExport" Style="{StaticResource GhostBtn}" Content="Esporta elenco" Padding="16,8" FontSize="13" Margin="0,0,8,8"/>
                       <Button x:Name="SetImport" Style="{StaticResource GhostBtn}" Content="Importa elenco" Padding="16,8" FontSize="13" Margin="0,0,8,8"/>
+                      <Button x:Name="SetCfgExp" Style="{StaticResource GhostBtn}" Content="Esporta configurazione" Padding="16,8" FontSize="13" Margin="0,0,8,8"/>
+                      <Button x:Name="SetCfgImp" Style="{StaticResource GhostBtn}" Content="Importa configurazione" Padding="16,8" FontSize="13" Margin="0,0,8,8"/>
                     </WrapPanel>
                   </StackPanel>
                 </Border>
@@ -1888,6 +2713,39 @@ $xaml = @'
               </UniformGrid>
             </StackPanel>
           </ScrollViewer>
+
+          <!-- Ricerca rapida (Ctrl+K) -->
+          <Grid x:Name="Palette" Grid.RowSpan="2" Visibility="Collapsed" Background="#B30B0D12">
+            <Border Width="560" VerticalAlignment="Top" Margin="0,60,0,0" Background="#12151D" BorderBrush="#343B55" BorderThickness="1" CornerRadius="16" Padding="14">
+              <StackPanel>
+                <Grid>
+                  <TextBox x:Name="PalText" Style="{StaticResource Input}" FontSize="15"/>
+                  <TextBlock x:Name="PalHint" Text="Cerca una sezione o un comando…" Foreground="#5C6278" FontSize="15" Margin="14,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                </Grid>
+                <ListBox x:Name="PalList" Background="Transparent" BorderThickness="0" MaxHeight="360" Margin="0,10,0,0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                  <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                      <Setter Property="Cursor" Value="Hand"/>
+                      <Setter Property="Template">
+                        <Setter.Value>
+                          <ControlTemplate TargetType="ListBoxItem">
+                            <Border x:Name="b" CornerRadius="8" Padding="12,8" Background="Transparent">
+                              <TextBlock Text="{Binding N}" Foreground="#E8EAF2" FontSize="14"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="Background" Value="#141823"/></Trigger>
+                              <Trigger Property="IsSelected" Value="True"><Setter TargetName="b" Property="Background" Value="#1B1F2E"/></Trigger>
+                            </ControlTemplate.Triggers>
+                          </ControlTemplate>
+                        </Setter.Value>
+                      </Setter>
+                    </Style>
+                  </ListBox.ItemContainerStyle>
+                </ListBox>
+                <TextBlock Text="Invio per aprire  ·  Esc per chiudere  ·  F5 ricarica  ·  Ctrl+H Home" Foreground="#5C6278" FontSize="11.5" Margin="4,8,0,0"/>
+              </StackPanel>
+            </Border>
+          </Grid>
 
           <!-- Toast -->
           <Border x:Name="Toast" Grid.Row="1" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,70"
@@ -2112,10 +2970,10 @@ $TrEn['Home'] = 'Home'
 $TrEn['Analisi in corso…'] = 'Analysing…'
 $TrEn['Componenti'] = 'Components'
 $TrEn['Disinstalla programmi'] = 'Uninstall apps'
-function T([string]$t) { if ($Settings.Lang -eq 'en' -and $TrEn.ContainsKey($t)) { $TrEn[$t] } else { $t } }
+function T([string]$t) { if ($Settings.Lang -ne 'en' -or -not $t) { return $t }; if ($TrEn.ContainsKey($t)) { return $TrEn[$t] }; [MtTr]::T($t) }
 function Apply-Lang([string]$Text) {
     if ($Settings.Lang -ne 'en') { return $Text }
-    [regex]::Replace($Text, '(Text|Content)="([^"]*)"', { param($m) $v = [Net.WebUtility]::HtmlDecode($m.Groups[2].Value); if ($TrEn.ContainsKey($v)) { "$($m.Groups[1].Value)=`"$([Security.SecurityElement]::Escape($TrEn[$v]))`"" } else { $m.Value } })
+    [regex]::Replace($Text, '(Text|Content|ToolTip)="([^"{][^"]*)"', { param($m) $v = [Net.WebUtility]::HtmlDecode($m.Groups[2].Value); $n = T $v; if ($n -ne $v) { "$($m.Groups[1].Value)=`"$([Security.SecurityElement]::Escape($n))`"" } else { $m.Value } })
 }
 $xaml = Apply-Lang (Apply-Theme $xaml)
 $win = [Windows.Markup.XamlReader]::Parse($xaml)
@@ -2125,6 +2983,12 @@ $ui = @{}
 foreach ($m in [regex]::Matches($xaml, 'x:Name="(\w+)"')) {
     $el = $win.FindName($m.Groups[1].Value)
     if ($el) { $ui[$m.Groups[1].Value] = $el }
+}
+
+if ($Settings.Lang -eq 'en') {
+    $tbDesc = [ComponentModel.DependencyPropertyDescriptor]::FromProperty([Windows.Controls.TextBlock]::TextProperty, [Windows.Controls.TextBlock])
+    $tbFix = [EventHandler]{ param($s, $e) $t = [MtTr]::T($s.Text); if ($t -ne $s.Text) { $s.Text = $t } }
+    foreach ($el in $ui.Values) { if ($el -is [Windows.Controls.TextBlock]) { $tbDesc.AddValueChanged($el, $tbFix) } }
 }
 
 # ============================================================
@@ -2161,7 +3025,7 @@ function Clear-Jobs {
 
 function G([int]$c) { [string][char]$c }
 function Vis($b) { if ($b) { 'Visible' } else { 'Collapsed' } }
-function Toast([string]$t) { [void]$State.Q.Add($t) }
+function Toast([string]$t) { [void]$State.Q.Add((T $t)) }
 
 # ============================================================
 #  Codice delle analisi e delle azioni (eseguito in background)
@@ -2942,14 +3806,14 @@ $sync.Info = $info
 #  Definizione delle sezioni
 # ============================================================
 $Modes = @{
-    updates = @{ Nav = 'NavUpdates'; Credits = @(@{ T = 'winget · Microsoft'; U = 'https://github.com/microsoft/winget-cli' }, @{ T = 'Microsoft Store'; U = 'https://apps.microsoft.com' });  Title = 'Aggiorna programmi'; Glyph = (G 0xE895); Arrow = $true
+    updates = @{ Nav = 'NavUpdates'; Online = $true; Credits = @(@{ T = 'winget · Microsoft'; U = 'https://github.com/microsoft/winget-cli' }, @{ T = 'Microsoft Store'; U = 'https://apps.microsoft.com' });  Title = 'Aggiorna programmi'; Glyph = (G 0xE895); Arrow = $true
         Sub = 'Analisi di winget e Microsoft Store…'; H = 'INSTALLATA', 'NUOVA', 'ORIGINE', 'STATO'
         Scan = $ScanUpdates; Action = $ActUpdates; Go = 'PROCEDI'; Restore = $true
         X1 = @{ Text = 'Escludi selezionati'; Click = { Add-Exclusions } }
         X2 = @{ Text = 'Ricerca di nuovo'; Click = { Start-Scan } }
         Empty = @{ Glyph = (G 0xE73E); Title = 'Tutto aggiornato'; Text = 'winget non ha trovato aggiornamenti disponibili.' } }
 
-    wu = @{ Nav = 'NavWU'; Credits = @(@{ T = 'Windows Update · Microsoft'; U = 'https://support.microsoft.com/windows' });  Title = 'Windows Update'; Glyph = (G 0xE777)
+    wu = @{ Nav = 'NavWU'; Online = $true; Credits = @(@{ T = 'Windows Update · Microsoft'; U = 'https://support.microsoft.com/windows' });  Title = 'Windows Update'; Glyph = (G 0xE777)
         Sub = 'Ricerca aggiornamenti di Windows…'; H = 'DIMENSIONE', '', 'TIPO', 'STATO'
         Scan = $ScanWU; Action = $ActWU; Go = 'INSTALLA'; Restore = $true
         X1 = @{ Text = 'Impostazioni Windows Update'; Click = { Start-Process 'ms-settings:windowsupdate' } }
@@ -2970,7 +3834,7 @@ $Modes = @{
         X2 = @{ Text = 'Ricarica'; Click = { Start-Scan } }
         Empty = @{ Glyph = (G 0xE8B7); Title = 'Nessun installer trovato'; Text = 'Copia file .exe, .msi, .msix o .appx nella cartella Installers, poi premi Ricarica.' } }
 
-    catalog = @{ Nav = 'NavCatalog'; Credits = @(@{ T = 'winget · Microsoft'; U = 'https://github.com/microsoft/winget-cli' }, @{ T = 'Repository comunitario winget-pkgs'; U = 'https://github.com/microsoft/winget-pkgs' });  Title = 'Catalogo winget'; Glyph = (G 0xE896); Search = $true
+    catalog = @{ Nav = 'NavCatalog'; Online = $true; Credits = @(@{ T = 'winget · Microsoft'; U = 'https://github.com/microsoft/winget-cli' }, @{ T = 'Repository comunitario winget-pkgs'; U = 'https://github.com/microsoft/winget-pkgs' });  Title = 'Catalogo winget'; Glyph = (G 0xE896); Search = $true
         Sub = 'Cerca tra migliaia di programmi e installali senza scaricare nulla a mano.'; H = 'VERSIONE', 'CORRISPONDENZA', 'ORIGINE', 'STATO'
         Scan = $ScanCatalog; Action = $ActWingetInstall; Go = 'INSTALLA'; Restore = $true
         Empty = @{ Glyph = (G 0xE721); Title = 'Cerca un programma'; Text = 'Scrivi un nome, ad esempio "vlc", "firefox" o "7zip", e premi Invio.' } }
@@ -3128,7 +3992,7 @@ function Hide-Empty {
 
 function Set-Busy([bool]$busy) {
     $ui.NavPanel.IsEnabled = -not $busy
-    foreach ($c in 'LX1', 'LX2', 'LAll', 'LNone', 'LSilent', 'LSearchBox') { $ui[$c].IsEnabled = -not $busy }
+    foreach ($c in 'LX1', 'LX2', 'LAll', 'LNone', 'LSilent', 'LSearchBox', 'LCsv') { $ui[$c].IsEnabled = -not $busy }
 }
 
 function Reset-Footer {
@@ -3142,7 +4006,14 @@ function Reset-Footer {
 
 function Start-Scan([hashtable]$Vars) {
     $M = $Modes[$State.Mode]
-    $Items.Clear(); Hide-Empty; Reset-Footer; $ui.LReport.Visibility = 'Collapsed'
+    if ($M.Online -and -not (Test-Online)) {
+        $Items.Clear(); Reset-Footer; $ui.LGo.Visibility = 'Collapsed'; $ui.LGo2.Visibility = 'Collapsed'
+        $sync.Token++; $sync.Phase = 'review'
+        Show-Empty @{ Glyph = (G 0xE774); Title = 'Nessuna connessione a internet'; Text = 'Questa sezione ha bisogno di internet. Collegati e premi F5 o Ricarica.' }
+        $ui.LSub.Text = 'Nessuna connessione a internet'
+        return
+    }
+    $Items.Clear(); Hide-Empty; Reset-Footer; Reset-Filter; $ui.LReport.Visibility = 'Collapsed'
     $ui.LAll.IsEnabled = $false; $ui.LNone.IsEnabled = $false
     $ui.LSummary.Text = ''; $ui.LSub.Text = $M.Sub
     $sync.Error = $null; $sync.ScanInfo = $null; $sync.Status = $M.Sub
@@ -3163,6 +4034,8 @@ $PrefetchOrder = 'full', 'deliver', 'updates', 'installers', 'profiles', 'uninst
 $PrefetchCode = @'
 $realSync = $sync
 try { [Threading.Thread]::CurrentThread.Priority = 'BelowNormal' } catch {}
+$online = Test-Online
+if (-not $online) { $list = @($list | Where-Object { $_ -notin 'updates', 'wu' }) }
 $i = 0
 foreach ($m in $list) {
     $i++
@@ -3194,7 +4067,7 @@ function Invalidate-Cache {
     Start-Prefetch
 }
 function Use-Cache([string]$m, $c) {
-    $Items.Clear(); Hide-Empty; Reset-Footer; $ui.LReport.Visibility = 'Collapsed'
+    $Items.Clear(); Hide-Empty; Reset-Footer; Reset-Filter; $ui.LReport.Visibility = 'Collapsed'
     $ui.LAll.IsEnabled = $false; $ui.LNone.IsEnabled = $false; $ui.LSummary.Text = ''
     $sync.Error = $c.Error; $sync.Rows = $c.Rows; $sync.ScanInfo = $c.Info
     $State.FromCache = $c.Time
@@ -3232,7 +4105,7 @@ function Open-Mode([string]$m, [hashtable]$Vars) {
     $ui.LCreditsBar.Visibility = Vis (@($M.Credits).Count -gt 0 -and $M.Credits)
     $ck = $M.Checks -ne $false
     $ui.LAll.Visibility = Vis $ck; $ui.LNone.Visibility = Vis $ck
-    $ui.LFill.Width = 0; $ui.LReport.Visibility = 'Collapsed'
+    $ui.LFill.Width = 0; $ui.LReport.Visibility = 'Collapsed'; Reset-Filter
     Set-Busy $false
     Reset-Footer
     if ($ui[$M.Nav]) { $ui[$M.Nav].IsChecked = $true }
@@ -3252,11 +4125,15 @@ function Start-Action([string]$op) {
     $sel = if ($noSel) { @() } else { @($Items | Where-Object { $_.Selected -and $_.Checkable }) }
     if ($op -ne 'web' -and $M.GoFilter) { $sel = @($sel | Where-Object $M.GoFilter) }
     if (-not $noSel -and -not $sel.Count) { if ($M.GoFilterMsg) { Toast $M.GoFilterMsg }; return }
+    if ($State.Mode -in 'updates', 'wu', 'installers', 'catalog', 'profiles', 'import', 'full', 'deliver') {
+        $free = (Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
+        if ($free -lt 5GB -and [MtTr]::Msg("Sul disco $env:SystemDrive restano solo $(Format-Size $free) liberi: aggiornamenti e installazioni potrebbero non riuscire. Conviene prima fare una Pulizia disco.`n`nContinuare comunque?", 'MultiTool', 'YesNo', 'Warning') -ne 'Yes') { return }
+    }
     if ($M.ConfirmOp -and $M.ConfirmOp[$op]) {
-        if ([Windows.MessageBox]::Show($M.ConfirmOp[$op], 'MultiTool', 'YesNo', 'Warning') -ne 'Yes') { return }
+        if ([MtTr]::Msg($M.ConfirmOp[$op], 'MultiTool', 'YesNo', 'Warning') -ne 'Yes') { return }
     }
     if ($M.Confirm) {
-        if ([Windows.MessageBox]::Show(($M.Confirm -f $sel.Count), 'MultiTool', 'YesNo', 'Warning') -ne 'Yes') { return }
+        if ([MtTr]::Msg(($M.Confirm -f $sel.Count), 'MultiTool', 'YesNo', 'Warning') -ne 'Yes') { return }
     }
     foreach ($it in $Items) {
         if ($noSel -or -not $it.Checkable) { continue }
@@ -3268,6 +4145,7 @@ function Start-Action([string]$op) {
     $ui.LGo.IsEnabled = $false; $ui.LGo2.IsEnabled = $false
     $ui.LCancel.Content = 'ANNULLA'; $ui.LCancel.IsEnabled = $true
     Set-Busy $true
+    [void][NativePow.Power]::SetThreadExecutionState(0x80000001)
     $restore = [bool]$M.Restore -and [bool]$Settings.Restore -and $op -notin 'web', 'restore', 'enable'
     $code = @'
 if ($restore) {
@@ -3299,8 +4177,8 @@ function Refresh-Info {
 function Get-Counts($coll) {
     $ok   = @($coll | Where-Object { $_.StatusKind -eq 'ok' }).Count
     $err  = @($coll | Where-Object { $_.StatusKind -eq 'err' }).Count
-    $skip = @($coll | Where-Object { $_.Status -eq 'Annullato' }).Count
-    "$ok completati" + $(if ($err) { "  ·  $err con errori" } else { '' }) + $(if ($skip) { "  ·  $skip annullati" } else { '' })
+    $skip = @($coll | Where-Object { $_.StatusKind -eq 'skip' -and $_.Status -in 'Annullato', 'Cancelled' }).Count
+    T ("$ok completati" + $(if ($err) { "  ·  $err con errori" } else { '' }) + $(if ($skip) { "  ·  $skip annullati" } else { '' }))
 }
 
 # --- Hardware ---
@@ -3342,8 +4220,8 @@ function New-HwCard($c) {
     $rd = ($c.Rows | ForEach-Object { '<RowDefinition Height="Auto"/>' }) -join ''
     $i = 0
     $cells = foreach ($r in $c.Rows) {
-        "<TextBlock Grid.Row=`"$i`" Text=`"$(& $E $r.L)`" Foreground=`"#9AA0B8`" FontSize=`"13`" Margin=`"0,4,12,4`"/>" +
-        "<TextBox Grid.Row=`"$i`" Grid.Column=`"1`" Text=`"$(& $E $r.V)`" IsReadOnly=`"True`" BorderThickness=`"0`" Background=`"Transparent`" Foreground=`"#E8EAF2`" FontSize=`"13`" TextWrapping=`"Wrap`" Margin=`"0,4,0,4`" Padding=`"0`"/>"
+        "<TextBlock Grid.Row=`"$i`" Text=`"$(& $E (T $r.L))`" Foreground=`"#9AA0B8`" FontSize=`"13`" Margin=`"0,4,12,4`"/>" +
+        "<TextBox Grid.Row=`"$i`" Grid.Column=`"1`" Text=`"$(& $E (T $r.V))`" IsReadOnly=`"True`" BorderThickness=`"0`" Background=`"Transparent`" Foreground=`"#E8EAF2`" FontSize=`"13`" TextWrapping=`"Wrap`" Margin=`"0,4,0,4`" Padding=`"0`"/>"
         $i++
     }
     $x = @"
@@ -3351,7 +4229,7 @@ function New-HwCard($c) {
   <StackPanel>
     <StackPanel Orientation="Horizontal">
       <Border Width="32" Height="32" CornerRadius="9" Background="#7C5CFF"><TextBlock Text="$(& $E $c.G)" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
-      <TextBlock Text="$(& $E $c.T)" FontSize="17" FontWeight="SemiBold" Foreground="#E8EAF2" Margin="12,0,0,0" VerticalAlignment="Center"/>
+      <TextBlock Text="$(& $E (T $c.T))" FontSize="17" FontWeight="SemiBold" Foreground="#E8EAF2" Margin="12,0,0,0" VerticalAlignment="Center"/>
     </StackPanel>
     <Grid Margin="0,14,0,0">
       <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" MinWidth="130"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -3388,8 +4266,8 @@ function Select-BackupDest {
     $d.Description = 'Scegli dove salvare il backup (disco esterno, chiavetta o cartella di rete)'
     if ($Settings.BackupDest -and (Test-Path $Settings.BackupDest)) { $d.SelectedPath = $Settings.BackupDest }
     if ($d.ShowDialog() -eq 'OK') {
-        if ($d.SelectedPath -like "$env:SystemDrive\*" -and [Windows.MessageBox]::Show('La destinazione è sullo stesso disco di Windows: se il disco si guasta perdi anche il backup. Usarla comunque?', 'MultiTool', 'YesNo', 'Warning') -ne 'Yes') { return }
-        $Settings.BackupDest = $d.SelectedPath; Save-Json 'settings.json' $Settings
+        if ($d.SelectedPath -like "$env:SystemDrive\*" -and [MtTr]::Msg('La destinazione è sullo stesso disco di Windows: se il disco si guasta perdi anche il backup. Usarla comunque?', 'MultiTool', 'YesNo', 'Warning') -ne 'Yes') { return }
+        $Settings.BackupDest = $d.SelectedPath; Save-Settings
         Update-BackupTask
         if ($State.Mode -eq 'backup') { Start-Scan }
     }
@@ -3414,7 +4292,7 @@ function Update-BackupInfo {
     $ui.SetBkInfo.Text = "Destinazione: $(if ($Settings.BackupDest) { $Settings.BackupDest } else { 'non scelta (vai in Backup)' })  ·  ultimo backup: $last"
 }
 function Remove-OldestRestore {
-    if ([Windows.MessageBox]::Show('Eliminare il punto di ripristino più vecchio?', 'MultiTool', 'YesNo', 'Question') -ne 'Yes') { return }
+    if ([MtTr]::Msg('Eliminare il punto di ripristino più vecchio?', 'MultiTool', 'YesNo', 'Question') -ne 'Yes') { return }
     Start-Bg '$r = Invoke-Hidden "$env:SystemRoot\System32\vssadmin.exe" "delete shadows /for=$env:SystemDrive /oldest /quiet"; $sync.Toast = $(if ($r.Code -eq 0) { "Punto di ripristino eliminato" } else { "Eliminazione non riuscita (codice $($r.Code))" })' @{}
     Toast 'Elimino il punto più vecchio…'
 }
@@ -3493,11 +4371,170 @@ function Install-Self {
         foreach ($k in $vals.Keys) { Set-ItemProperty $UninstKey -Name $k -Value $vals[$k] }
         foreach ($k in 'NoModify', 'NoRepair') { Set-ItemProperty $UninstKey -Name $k -Value 1 -Type DWord }
         Set-ItemProperty $UninstKey -Name EstimatedSize -Value $size -Type DWord
-        if ([Windows.MessageBox]::Show("MultiTool è installato in $InstTarget, con collegamenti nel menu Start e sul desktop.`n`nAprire ora la versione installata?", 'MultiTool', 'YesNo', 'Information') -eq 'Yes') {
+        if ([MtTr]::Msg("MultiTool è installato in $InstTarget, con collegamenti nel menu Start e sul desktop.`n`nAprire ora la versione installata?", 'MultiTool', 'YesNo', 'Information') -eq 'Yes') {
             $State.ForceClose = $true; $Mutex.ReleaseMutex()
             Start-Process $exe; $win.Close()
         }
     } catch { Toast "Installazione non riuscita: $($_.Exception.Message)" }
+}
+
+# --- Filtro elenco, CSV ---
+$ListView = [Windows.Data.CollectionViewSource]::GetDefaultView($Items)
+function Reset-Filter { $ui.LFilter.Text = ''; $ListView.Filter = $null; $ui.LFilterBox.Visibility = 'Collapsed'; $ui.LCsv.Visibility = 'Collapsed' }
+$ui.LFilter.Add_TextChanged({
+    $q = $ui.LFilter.Text.Trim()
+    $ui.LFilterHint.Visibility = Vis (-not $q)
+    if (-not $q) { $ListView.Filter = $null }
+    else { $ListView.Filter = [Predicate[object]]{ param($o) ("$($o.Name) $($o.Sub) $($o.Tag) $($o.C1)").IndexOf($q, [StringComparison]::OrdinalIgnoreCase) -ge 0 }.GetNewClosure() }
+})
+function Export-ListCsv {
+    $M = $Modes[$State.Mode]
+    $d = New-Object Microsoft.Win32.SaveFileDialog; $d.Filter = 'CSV (*.csv)|*.csv'
+    $d.FileName = ($M.Title -replace '[^\w]+', '-') + "-$(Get-Date -Format 'yyyyMMdd').csv"
+    if (-not $d.ShowDialog($win)) { return }
+    $h = @($M.H)
+    $Items | ForEach-Object {
+        $o = [ordered]@{ Nome = $_.Name; Dettaglio = $_.Sub }
+        if ($h[0]) { $o[$h[0]] = $_.C1 }; if ($h[1]) { $o[$h[1]] = $_.C2 }; if ($h[2]) { $o[$h[2]] = $_.Tag }
+        $o['Esito'] = $_.Status
+        [pscustomobject]$o
+    } | Export-Csv -Path $d.FileName -Delimiter ';' -NoTypeInformation -Encoding UTF8
+    Toast "Esportato: $(Split-Path $d.FileName -Leaf)"
+}
+
+# --- Ricerca rapida (Ctrl+K) ---
+$PalCmds = New-Object System.Collections.ArrayList
+foreach ($n in @($ui.NavPanel.Children)) {
+    if ($n -is [Windows.Controls.RadioButton]) {
+        $name = $n.Name
+        [void]$PalCmds.Add([pscustomobject]@{ N = (T ([string]$n.Content)); A = [scriptblock]::Create("`$ui['$name'].IsChecked = `$true; `$ui['$name'].RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent)))") })
+    }
+}
+foreach ($c in @(
+    @{ N = 'Storico sensori'; A = { Export-SensorHistory } }
+    @{ N = 'Esporta inventario hardware'; A = { Open-Hw; Export-Hw } }
+    @{ N = 'Etichetta QR del PC'; A = { Toast 'Creo l''etichetta…'; Start-Bg '$f = New-PcLabel; Start-Process $f' @{} } }
+    @{ N = 'Backup driver'; A = { Start-DriverBackup } }
+    @{ N = 'Esporta configurazione di MultiTool'; A = { Export-Config } }
+    @{ N = 'Importa configurazione di MultiTool'; A = { Import-Config } }
+    @{ N = 'Controlla aggiornamenti di MultiTool'; A = { Start-UpdCheck; Show-View 'ViewSettings' } }
+    @{ N = 'Informazioni e note legali'; A = { Show-About $false } }
+    @{ N = 'Apri cartella dati'; A = { Start-Process explorer.exe $DataDir } }
+    @{ N = 'Gestione dispositivi'; A = { Start-Process devmgmt.msc } }
+    @{ N = 'Sicurezza di Windows'; A = { Start-Process 'windowsdefender:' } }
+    @{ N = 'Riavvia il PC'; A = { $ui.RebootGo.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent))) } }
+)) { $c.N = T $c.N; [void]$PalCmds.Add([pscustomobject]$c) }
+function Update-Palette {
+    $q = $ui.PalText.Text.Trim()
+    $ui.PalHint.Visibility = Vis (-not $q)
+    $ui.PalList.ItemsSource = @($PalCmds | Where-Object { -not $q -or $_.N.IndexOf($q, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+    if ($ui.PalList.Items.Count) { $ui.PalList.SelectedIndex = 0 }
+}
+function Open-Palette { $ui.PalText.Text = ''; Update-Palette; $ui.Palette.Visibility = 'Visible'; [void]$ui.PalText.Focus() }
+function Close-Palette { $ui.Palette.Visibility = 'Collapsed' }
+function Run-Palette { $c = $ui.PalList.SelectedItem; Close-Palette; if ($c) { if ($sync.Phase -eq 'run' -and $c.N -notmatch 'Storico|Esporta|Informazioni|cartella') { Toast 'Attendi la fine dell''operazione in corso'; return }; & $c.A } }
+$ui.PalText.Add_TextChanged({ Update-Palette })
+$ui.PalText.Add_PreviewKeyDown({
+    param($s, $e)
+    switch ($e.Key) {
+        'Down'   { if ($ui.PalList.SelectedIndex -lt $ui.PalList.Items.Count - 1) { $ui.PalList.SelectedIndex++ }; $ui.PalList.ScrollIntoView($ui.PalList.SelectedItem); $e.Handled = $true }
+        'Up'     { if ($ui.PalList.SelectedIndex -gt 0) { $ui.PalList.SelectedIndex-- }; $ui.PalList.ScrollIntoView($ui.PalList.SelectedItem); $e.Handled = $true }
+        'Return' { Run-Palette; $e.Handled = $true }
+        'Escape' { Close-Palette; $e.Handled = $true }
+    }
+})
+$ui.PalList.Add_MouseLeftButtonUp({ Run-Palette })
+$ui.Palette.Add_MouseLeftButtonDown({ param($s, $e) if ($e.OriginalSource -eq $ui.Palette) { Close-Palette } })
+
+# --- Scorciatoie da tastiera ---
+$win.Add_PreviewKeyDown({
+    param($s, $e)
+    $ctrl = [Windows.Input.Keyboard]::Modifiers -band [Windows.Input.ModifierKeys]::Control
+    if ($ctrl -and $e.Key -eq 'K') { if ($ui.Palette.Visibility -eq 'Visible') { Close-Palette } else { Open-Palette }; $e.Handled = $true; return }
+    if ($ui.Palette.Visibility -eq 'Visible') { return }
+    if (-not $ui.NavPanel.IsEnabled -and $sync.Phase -ne 'run') { return }
+    if ($ctrl -and $e.Key -eq 'H' -and $sync.Phase -ne 'run') { Go-Home; $e.Handled = $true; return }
+    if ($e.Key -eq 'F5' -and $sync.Phase -ne 'run') {
+        if ($ui.ViewList.Visibility -eq 'Visible' -and -not $Modes[$State.Mode].Search) { Start-Scan }
+        elseif ($ui.ViewHw.Visibility -eq 'Visible') { Load-Hw; Start-Sensors }
+        elseif ($ui.ViewHome.Visibility -eq 'Visible') { Refresh-Info }
+        elseif ($ui.ViewLogs.Visibility -eq 'Visible') { Load-Logs }
+        $e.Handled = $true; return
+    }
+    if ($e.Key -eq 'Escape' -and $ui.ViewList.Visibility -eq 'Visible' -and -not ($e.OriginalSource -is [Windows.Controls.TextBox] -and $e.OriginalSource.Text)) {
+        $ui.LCancel.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent))); $e.Handled = $true
+    }
+})
+
+# --- Configurazione esportabile ---
+function Export-Config {
+    $d = New-Object Microsoft.Win32.SaveFileDialog; $d.Filter = 'Configurazione MultiTool (*.zip)|*.zip'; $d.FileName = 'MultiTool-configurazione.zip'
+    if (-not $d.ShowDialog($win)) { return }
+    $tmp = Join-Path $env:TEMP ('mtcfg-' + [guid]::NewGuid()); New-Item -ItemType Directory "$tmp\Profili" -Force | Out-Null
+    $cfg = $Settings | Select-Object * -ExcludeProperty WinL, WinT, WinW, WinH, WinMax, LastBackup, TermsAccepted, BackupDest
+    if ($cfg.ShopLogo -and (Test-Path $cfg.ShopLogo)) { Copy-Item $cfg.ShopLogo (Join-Path $tmp ('logo' + [IO.Path]::GetExtension($cfg.ShopLogo))) }
+    ConvertTo-Json $cfg -Depth 5 | Set-Content "$tmp\settings.json" -Encoding UTF8
+    foreach ($f in 'exclusions.json') { $src = Join-Path $DataDir $f; if (Test-Path $src) { Copy-Item $src $tmp } }
+    Copy-Item "$ProfDir\*.json" "$tmp\Profili" -ErrorAction SilentlyContinue
+    if (Test-Path $d.FileName) { Remove-Item $d.FileName -Force }
+    Compress-Archive -Path "$tmp\*" -DestinationPath $d.FileName
+    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    Toast 'Configurazione esportata: importala sugli altri PC da Impostazioni'
+}
+function Import-Config {
+    $d = New-Object Microsoft.Win32.OpenFileDialog; $d.Filter = 'Configurazione MultiTool (*.zip)|*.zip'
+    if (-not $d.ShowDialog($win)) { return }
+    try {
+        $tmp = Join-Path $env:TEMP ('mtcfg-' + [guid]::NewGuid())
+        Expand-Archive $d.FileName $tmp -Force
+        if (-not (Test-Path "$tmp\settings.json")) { throw 'il file non è una configurazione di MultiTool' }
+        $new = Get-Content "$tmp\settings.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($p in $new.PSObject.Properties) { if ($p.Name -notin 'WinL', 'WinT', 'WinW', 'WinH', 'WinMax', 'LastBackup', 'TermsAccepted', 'BackupDest', 'ShopLogo') { $Settings | Add-Member -NotePropertyName $p.Name -NotePropertyValue $p.Value -Force } }
+        $logo = Get-ChildItem $tmp -Filter 'logo.*' | Select-Object -First 1
+        if ($logo) { $dst = Join-Path $DataDir $logo.Name; Copy-Item $logo.FullName $dst -Force; $Settings.ShopLogo = $dst }
+        if (Test-Path "$tmp\exclusions.json") {
+            $ex = [Collections.ArrayList]@(Read-Exclusions)
+            foreach ($x in @(Get-Content "$tmp\exclusions.json" -Raw | ConvertFrom-Json)) { if ($x -and $ex -notcontains $x) { [void]$ex.Add($x) } }
+            Save-Json 'exclusions.json' @($ex)
+        }
+        Copy-Item "$tmp\Profili\*.json" $ProfDir -Force -ErrorAction SilentlyContinue
+        Save-Settings
+        Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        if ([MtTr]::Msg('Configurazione importata. Riavviare MultiTool per applicarla?', 'MultiTool', 'YesNo', 'Question') -eq 'Yes') { Restart-App }
+    } catch { Toast "Importazione non riuscita: $($_.Exception.Message)" }
+}
+
+# --- Ultime operazioni e allarmi salute ---
+function Update-LastOps {
+    $p = Join-Path $DataDir 'history.jsonl'
+    $last = @{}
+    if (Test-Path $p) {
+        foreach ($l in Get-Content $p -Tail 3000 -Encoding UTF8) {
+            try { $h = $l | ConvertFrom-Json } catch { continue }
+            $k = switch -Regex ($h.Area) { 'Aggiorna|Automatic' { 'upd' } 'Windows Update' { 'wu' } 'Pulizia' { 'clean' } 'Backup' { 'bk' } 'Manutenzione' { 'full' } default { $null } }
+            if ($k) { $last[$k] = [datetime]$h.Time }
+        }
+    }
+    if ($Settings.LastBackup) { $last['bk'] = [datetime]$Settings.LastBackup }
+    $f = { param($k, $t) "$t " + $(if ($last[$k]) { $last[$k].ToString('dd/MM HH:mm') } else { 'mai' }) }
+    $ui.HLast.Text = ((& $f 'full' 'Manutenzione:'), (& $f 'upd' 'Programmi aggiornati:'), (& $f 'wu' 'Windows Update:'), (& $f 'clean' 'Pulizia:'), (& $f 'bk' 'Backup:')) -join '   ·   '
+}
+function Test-HealthAlarms($i) {
+    $al = @()
+    foreach ($d in @($i.PD)) {
+        if ($d.Health -and $d.Health -ne 'Healthy') { $al += "Disco $($d.Name): stato $($d.Health)" }
+        if ($null -ne $d.Wear -and $d.Wear -ge 80) { $al += "Disco $($d.Name): usura $($d.Wear)%" }
+        if ($d.Temp -ge 60) { $al += "Disco $($d.Name): $($d.Temp) °C" }
+    }
+    foreach ($d in @($i.Disks)) { if ($d.Size -and $d.Free / $d.Size -lt 0.1) { $al += "Disco $($d.Name): solo $(Format-Size $d.Free) liberi" } }
+    if ($i.Bat -and $null -ne $i.Bat.Health -and $i.Bat.Health -lt 50) { $al += "Batteria: capacità al $($i.Bat.Health)%" }
+    if ($i.DefOk -eq $false) { $al += 'Antivirus Microsoft Defender disattivato' }
+    $key = ($al -join '|')
+    if ($al.Count -and ($Settings.LastAlarm -ne "$((Get-Date).ToString('yyyyMMdd'))|$key")) {
+        $Settings | Add-Member -NotePropertyName LastAlarm -NotePropertyValue "$((Get-Date).ToString('yyyyMMdd'))|$key" -Force; Save-Settings
+        Show-Toast 'MultiTool - Attenzione' ($al -join "`n")
+        foreach ($a in $al) { Toast $a }
+    }
 }
 
 # --- Rapporto HTML ---
@@ -3556,7 +4593,13 @@ function Install-SelfUpdate {
         Invoke-WebRequest "$u/MultiTool.ps1" -OutFile $tmp -UseBasicParsing -TimeoutSec 60
         $errs = $null; $tok = $null
         [void][System.Management.Automation.Language.Parser]::ParseFile($tmp, [ref]$tok, [ref]$errs)
-        if ($errs.Count -or -not (Select-String -Path $tmp -Pattern '\$AppVersion' -Quiet)) { throw 'il file scaricato non è valido' }
+        if ($errs.Count) { throw 'il file scaricato contiene errori' }
+        $want = if ($sync.NewVersion) { [regex]::Escape($sync.NewVersion) } else { '[\d\.]+' }
+        if (-not (Select-String -Path $tmp -Pattern "\`$AppVersion = '$want'" -Quiet)) { throw 'il file scaricato non corrisponde alla versione annunciata' }
+        foreach ($f in 'MultiTool.ico', 'MultiTool-512.png') {
+            $dst = Join-Path $Root $f
+            if (-not (Test-Path $dst)) { try { Invoke-WebRequest "$u/$f" -OutFile $dst -UseBasicParsing -TimeoutSec 60 } catch {} }
+        }
         Copy-Item $ScriptPath (Join-Path $DataDir "backup-MultiTool-$AppVersion.ps1") -Force
         Copy-Item $tmp $ScriptPath -Force
         Add-History 'MultiTool' "Aggiornato da $AppVersion" 'Completato' 'ok'
@@ -3565,7 +4608,8 @@ function Install-SelfUpdate {
 }
 function Restart-App {
     $State.ForceClose = $true
-    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`"" -WindowStyle Hidden
+    $hid = if (-not $win.IsVisible -and $Settings.Tray) { ' -Hidden' } else { '' }
+    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`"$hid" -WindowStyle Hidden
     $Mutex.ReleaseMutex()
     $win.Close()
 }
@@ -3575,11 +4619,11 @@ $Tray = New-Object System.Windows.Forms.NotifyIcon
 $Tray.Icon = if (Test-Path $IcoPath) { New-Object System.Drawing.Icon $IcoPath } else { [System.Drawing.SystemIcons]::Application }
 $Tray.Text = 'MultiTool'
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
-$miOpen = $menu.Items.Add('Apri MultiTool')
-$miUpd  = $menu.Items.Add('Aggiorna programmi')
-$miFull = $menu.Items.Add('Manutenzione completa')
+$miOpen = $menu.Items.Add((T 'Apri MultiTool'))
+$miUpd  = $menu.Items.Add((T 'Aggiorna programmi'))
+$miFull = $menu.Items.Add((T 'Manutenzione completa'))
 [void]$menu.Items.Add('-')
-$miExit = $menu.Items.Add('Esci')
+$miExit = $menu.Items.Add((T 'Esci'))
 $Tray.ContextMenuStrip = $menu
 function Show-Main { $win.Show(); if ($win.WindowState -eq 'Minimized') { $win.WindowState = 'Normal' }; [void]$win.Activate() }
 $Tray.Add_DoubleClick({ Show-Main })
@@ -3600,7 +4644,7 @@ try {
 function Start-CountCheck { $sync.UpdCount = $null; Start-Bg $CountCode @{} }
 $bgTimer = New-Object Windows.Threading.DispatcherTimer
 $bgTimer.Interval = [TimeSpan]::FromHours(6)
-$bgTimer.Add_Tick({ if ($sync.Phase -ne 'run') { Start-CountCheck; Start-UpdCheck } })
+$bgTimer.Add_Tick({ if ($sync.Phase -ne 'run') { Start-CountCheck; Start-UpdCheck; Refresh-Info } })
 $bgTimer.Start()
 
 # --- Azioni speciali ---
@@ -3616,7 +4660,7 @@ function Add-Exclusions {
 }
 
 function Clear-History2 {
-    if ([Windows.MessageBox]::Show('Svuotare la cronologia?', 'MultiTool', 'YesNo', 'Question') -ne 'Yes') { return }
+    if ([MtTr]::Msg('Svuotare la cronologia?', 'MultiTool', 'YesNo', 'Question') -ne 'Yes') { return }
     Remove-Item (Join-Path $DataDir 'history.jsonl') -ErrorAction SilentlyContinue
     Start-Scan
 }
@@ -3656,14 +4700,14 @@ $ui.HwLabel.Add_Click({ Toast 'Creo l''etichetta…'; Start-Bg '$f = New-PcLabel
 foreach ($b in 'HwCr1', 'HwCr2', 'HwCr3', 'HwCr4') { $ui[$b].Add_Click({ param($s, $e) Start-Process $s.Tag }) }
 $ui.HwAdv.Add_Click({
     if ($Settings.Lhm) {
-        if ([Windows.MessageBox]::Show('Disattivare i sensori avanzati?', 'MultiTool', 'YesNo', 'Question') -eq 'Yes') {
-            $Settings.Lhm = $false; Save-Json 'settings.json' $Settings; Start-Sensors
+        if ([MtTr]::Msg('Disattivare i sensori avanzati?', 'MultiTool', 'YesNo', 'Question') -eq 'Yes') {
+            $Settings.Lhm = $false; Save-Settings; Start-Sensors
         }
         return
     }
     $msg = "Per leggere temperature dei core, ventole e consumi serve un componente che accede ai sensori della scheda madre." +
            "`n`nVerranno installati tramite winget:`n- LibreHardwareMonitor (open source)`n- PawnIO, il driver firmato che usa per leggere i sensori`n`nProcedere?"
-    if ([Windows.MessageBox]::Show($msg, 'MultiTool', 'YesNo', 'Question') -ne 'Yes') { return }
+    if ([MtTr]::Msg($msg, 'MultiTool', 'YesNo', 'Question') -ne 'Yes') { return }
     if (Find-LhmDll) { $sync.LhmResult = 'ok' }
     else { $ui.HwAdv.IsEnabled = $false; $ui.HwSensMsg.Text = 'Installazione in corso…'; $sync.LhmResult = $null; Start-Bg $LhmInstallCode @{} }
 })
@@ -3674,7 +4718,7 @@ $ui.LogFiles.Add_SelectionChanged({
 $ui.LogReload.Add_Click({ Load-Logs })
 $ui.LogOpen.Add_Click({ Start-Process explorer.exe (Join-Path $DataDir 'Logs') })
 $ui.LogDelete.Add_Click({
-    if ([Windows.MessageBox]::Show('Eliminare tutti i log?', 'MultiTool', 'YesNo', 'Question') -eq 'Yes') {
+    if ([MtTr]::Msg('Eliminare tutti i log?', 'MultiTool', 'YesNo', 'Question') -eq 'Yes') {
         Get-ChildItem (Join-Path $DataDir 'Logs') -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
         Load-Logs
     }
@@ -3688,8 +4732,9 @@ $ui.QClean.Add_Click({ Open-Mode 'cleanup' })
 
 $ui.LX1.Add_Click({ & $Modes[$State.Mode].X1.Click })
 $ui.LX2.Add_Click({ & $Modes[$State.Mode].X2.Click })
-$ui.LAll.Add_Click({  foreach ($i in $Items) { if ($i.Checkable -and $i.Editable) { $i.Selected = $true } } })
-$ui.LNone.Add_Click({ foreach ($i in $Items) { if ($i.Checkable -and $i.Editable) { $i.Selected = $false } } })
+$ui.LAll.Add_Click({  foreach ($i in $ListView) { if ($i.Checkable -and $i.Editable) { $i.Selected = $true } } })
+$ui.LNone.Add_Click({ foreach ($i in $ListView) { if ($i.Checkable -and $i.Editable) { $i.Selected = $false } } })
+$ui.LCsv.Add_Click({ Export-ListCsv })
 $ui.LGo.Add_Click({  Start-Action ([string]$Modes[$State.Mode].GoOp) })
 $ui.LGo2.Add_Click({ Start-Action ([string]$Modes[$State.Mode].Go2Op) })
 $ui.LCancel.Add_Click({
@@ -3710,7 +4755,7 @@ $ui.LSearchGo.Add_Click($doSearch)
 $ui.LSearch.Add_KeyDown({ param($s, $e) if ($e.Key -eq 'Return') { & $doSearch } })
 
 $ui.RebootGo.Add_Click({
-    if ([Windows.MessageBox]::Show('Riavviare il computer adesso? Salva prima il lavoro aperto.', 'MultiTool', 'YesNo', 'Warning') -eq 'Yes') {
+    if ([MtTr]::Msg('Riavviare il computer adesso? Salva prima il lavoro aperto.', 'MultiTool', 'YesNo', 'Warning') -eq 'Yes') {
         Restart-Computer -Force
     }
 })
@@ -3735,14 +4780,14 @@ $secTpl = @'
 </StackPanel>
 '@
 foreach ($sec in $Legal) {
-    $paras = ($sec.B | ForEach-Object { "<TextBlock Text=`"$([Security.SecurityElement]::Escape($_))`" Foreground=`"#9AA0B8`" FontSize=`"13.5`" TextWrapping=`"Wrap`" LineHeight=`"21`" Margin=`"0,4,0,4`"/>" }) -join ''
-    [void]$ui.AboutBody.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($secTpl -f [Security.SecurityElement]::Escape($sec.T), $paras))))
+    $paras = ($sec.B | ForEach-Object { "<TextBlock Text=`"$([Security.SecurityElement]::Escape((T $_)))`" Foreground=`"#9AA0B8`" FontSize=`"13.5`" TextWrapping=`"Wrap`" LineHeight=`"21`" Margin=`"0,4,0,4`"/>" }) -join ''
+    [void]$ui.AboutBody.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($secTpl -f [Security.SecurityElement]::Escape((T $sec.T)), $paras))))
 }
 $ui.FootAbout.Add_Click({ Show-About $false })
 $ui.SetAbout.Add_Click({ Show-About $false })
 $ui.FootGit.Add_Click({ Start-Process $AppRepo })
 $ui.AboutAccept.Add_Click({
-    $Settings.TermsAccepted = $TermsVersion; Save-Json 'settings.json' $Settings
+    $Settings.TermsAccepted = $TermsVersion; Save-Settings
     $ui.AboutAcceptBox.Visibility = 'Collapsed'; $ui.NavPanel.IsEnabled = $true
     Go-Home; Start-Prefetch
 })
@@ -3766,7 +4811,7 @@ function Update-AutoInfo {
 
 $ui.SetRestore.Add_Click({
     $Settings.Restore = [bool]$ui.SetRestore.IsChecked
-    Save-Json 'settings.json' $Settings
+    Save-Settings
 })
 
 $ui.SetSave.Add_Click({
@@ -3775,7 +4820,7 @@ $ui.SetSave.Add_Click({
     $day = ($days | ForEach-Object { $ui[$_] } | Where-Object { $_.IsChecked } | Select-Object -First 1).Tag
     if (-not $day) { $day = 'Sunday' }
     $Settings.AutoEnabled = [bool]$ui.SetAuto.IsChecked; $Settings.AutoDay = $day; $Settings.AutoTime = $time
-    Save-Json 'settings.json' $Settings
+    Save-Settings
     try {
         if ($Settings.AutoEnabled) {
             $vbs = Join-Path $DataDir 'auto.vbs'
@@ -3826,7 +4871,7 @@ foreach ($tb in 'SetShopName', 'SetShopPhone', 'SetShopEmail', 'SetShopWeb', 'Se
         param($s, $e)
         $v = $s.Text.Trim()
         if ($s.Tag -eq 'WarrantyMonths') { $n = 0; if ([int]::TryParse($v, [ref]$n) -and $n -ge 0) { $v = $n } else { $s.Text = $Settings.WarrantyMonths; return } }
-        $Settings.($s.Tag) = $v; Save-Json 'settings.json' $Settings
+        $Settings.($s.Tag) = $v; Save-Settings
     })
 }
 $ui.SetLogoInfo.Text = if ($Settings.ShopLogo) { Split-Path $Settings.ShopLogo -Leaf } else { 'nessuno' }
@@ -3834,7 +4879,7 @@ $ui.SetLogo.Add_Click({
     $d = New-Object Microsoft.Win32.OpenFileDialog; $d.Filter = 'Immagini (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg'
     if ($d.ShowDialog($win)) {
         $dst = Join-Path $DataDir ('logo' + [IO.Path]::GetExtension($d.FileName)); Copy-Item $d.FileName $dst -Force
-        $Settings.ShopLogo = $dst; Save-Json 'settings.json' $Settings; $ui.SetLogoInfo.Text = Split-Path $d.FileName -Leaf
+        $Settings.ShopLogo = $dst; Save-Settings; $ui.SetLogoInfo.Text = Split-Path $d.FileName -Leaf
     }
 })
 $ui.SetBkAuto.IsChecked = [bool]$Settings.BackupAuto
@@ -3843,12 +4888,12 @@ $ui.SetBkSave.Add_Click({
     $t = $ui.SetBkTime.Text.Trim()
     if ($t -notmatch '^([01]?\d|2[0-3]):[0-5]\d$') { Toast 'Orario non valido: usa il formato HH:MM'; return }
     if ($ui.SetBkAuto.IsChecked -and -not $Settings.BackupDest) { Toast 'Scegli prima la destinazione nella sezione Backup'; $ui.SetBkAuto.IsChecked = $false; return }
-    $Settings.BackupAuto = [bool]$ui.SetBkAuto.IsChecked; $Settings.BackupTime = $t; Save-Json 'settings.json' $Settings
+    $Settings.BackupAuto = [bool]$ui.SetBkAuto.IsChecked; $Settings.BackupTime = $t; Save-Settings
     Update-BackupTask; Toast $(if ($Settings.BackupAuto) { "Backup automatico ogni giorno alle $t" } else { 'Backup automatico disattivato' })
 })
 $ui.SetSensLog.IsChecked = [bool]$Settings.SensLog
 $ui.SetSensLog.Add_Click({
-    $Settings.SensLog = [bool]$ui.SetSensLog.IsChecked; Save-Json 'settings.json' $Settings
+    $Settings.SensLog = [bool]$ui.SetSensLog.IsChecked; Save-Settings
     $sync.SensLog = $Settings.SensLog
     if ($Settings.SensLog -and $ui.ViewHw.Visibility -ne 'Visible') { Start-Sensors }
 })
@@ -3863,31 +4908,35 @@ $ui.SetUninst.Add_Click({
 })
 $ui.SetEnglish.IsChecked = ($Settings.Lang -eq 'en')
 $ui.SetEnglish.Add_Click({
-    $Settings.Lang = if ($ui.SetEnglish.IsChecked) { 'en' } else { 'it' }; Save-Json 'settings.json' $Settings
+    $Settings.Lang = if ($ui.SetEnglish.IsChecked) { 'en' } else { 'it' }; Save-Settings
     if ($sync.Phase -ne 'run') { Restart-App }
 })
 Update-BackupInfo
 $ui.SetLight.IsChecked = ($Settings.Theme -eq 'light')
 $ui.SetTray.IsChecked = [bool]$Settings.Tray
 $ui.SetPrefetch.IsChecked = [bool]$Settings.Prefetch
+$ui.SetAutoFull.IsChecked = [bool]$Settings.AutoFull
+$ui.SetAutoFull.Add_Click({ $Settings.AutoFull = [bool]$ui.SetAutoFull.IsChecked; Save-Settings; Toast $(if ($Settings.AutoFull) { 'L''attività automatica eseguirà la manutenzione completa' } else { 'L''attività automatica aggiornerà solo i programmi' }) })
+$ui.SetCfgExp.Add_Click({ Export-Config })
+$ui.SetCfgImp.Add_Click({ Import-Config })
 $ui.SetPrefetch.Add_Click({
-    $Settings.Prefetch = [bool]$ui.SetPrefetch.IsChecked; Save-Json 'settings.json' $Settings
+    $Settings.Prefetch = [bool]$ui.SetPrefetch.IsChecked; Save-Settings
     if ($Settings.Prefetch) { Start-Prefetch } else { $sync.PrefetchGen = [int]$sync.PrefetchGen + 1; $ui.PrefInfo.Text = '' }
 })
 $ui.SetUpdUrl.Text = [string]$Settings.UpdateUrl
 $ui.SetSelfUpd.IsChecked = [bool]$Settings.AutoSelfUpdate
-$ui.SetSelfUpd.Add_Click({ $Settings.AutoSelfUpdate = [bool]$ui.SetSelfUpd.IsChecked; Save-Json 'settings.json' $Settings })
+$ui.SetSelfUpd.Add_Click({ $Settings.AutoSelfUpdate = [bool]$ui.SetSelfUpd.IsChecked; Save-Settings })
 $ui.SetLight.Add_Click({
     $Settings.Theme = if ($ui.SetLight.IsChecked) { 'light' } else { 'dark' }
-    Save-Json 'settings.json' $Settings
+    Save-Settings
     if ($sync.Phase -ne 'run') { Restart-App } else { Toast 'Il tema verrà applicato al prossimo avvio' }
 })
-$ui.SetTray.Add_Click({ $Settings.Tray = [bool]$ui.SetTray.IsChecked; $Tray.Visible = $Settings.Tray; Save-Json 'settings.json' $Settings })
-$ui.SetUpdUrl.Add_LostFocus({ $Settings.UpdateUrl = $ui.SetUpdUrl.Text.Trim(); Save-Json 'settings.json' $Settings })
-$ui.SetUpdCheck.Add_Click({ $Settings.UpdateUrl = $ui.SetUpdUrl.Text.Trim(); Save-Json 'settings.json' $Settings; Start-UpdCheck })
+$ui.SetTray.Add_Click({ $Settings.Tray = [bool]$ui.SetTray.IsChecked; $Tray.Visible = $Settings.Tray; Save-Settings })
+$ui.SetUpdUrl.Add_LostFocus({ $Settings.UpdateUrl = $ui.SetUpdUrl.Text.Trim(); Save-Settings })
+$ui.SetUpdCheck.Add_Click({ $Settings.UpdateUrl = $ui.SetUpdUrl.Text.Trim(); Save-Settings; Start-UpdCheck })
 $ui.SetUpdGo.Add_Click({
     if ($sync.Phase -eq 'run') { Toast 'Attendi la fine dell''operazione in corso'; return }
-    if ([Windows.MessageBox]::Show("Aggiornare MultiTool alla versione $($sync.NewVersion)? Il programma verrà riavviato.", 'MultiTool', 'YesNo', 'Question') -eq 'Yes') { Install-SelfUpdate }
+    if ([MtTr]::Msg("Aggiornare MultiTool alla versione $($sync.NewVersion)? Il programma verrà riavviato.", 'MultiTool', 'YesNo', 'Question') -eq 'Yes') { Install-SelfUpdate }
 })
 
 # ============================================================
@@ -3925,7 +4974,7 @@ $timer.Add_Tick({
   try {
     Clear-Jobs
     # Toast (coda)
-    if ($sync.Toast) { [void]$State.Q.Add($sync.Toast); $sync.Toast = $null }
+    if ($sync.Toast) { [void]$State.Q.Add((T $sync.Toast)); $sync.Toast = $null }
     if ((Get-Date) -gt $State.ToastUntil) {
         if ($State.Q.Count) {
             $ui.ToastText.Text = $State.Q[0]; $State.Q.RemoveAt(0)
@@ -3978,6 +5027,8 @@ $timer.Add_Tick({
         $ui.HDefDot.Fill = if ($i.DefOk -eq $true) { '#34D399' } elseif ($i.DefOk -eq $false) { '#F87171' } else { '#FBBF24' }
         $ui.HSub.Text = "$env:COMPUTERNAME  ·  acceso da $($i.Uptime)"
         $State.Pending = [bool]$i.Pending
+        Update-LastOps
+        try { Test-HealthAlarms $i } catch { Write-ErrLog "Allarmi: $($_.Exception.Message)" }
         $ui.HHealth.Children.Clear()
         foreach ($d in @($i.PD)) {
             $ok = $d.Health -eq 'Healthy'
@@ -3985,7 +5036,7 @@ $timer.Add_Tick({
             $det = @($(if ($d.Media -and $d.Media -ne 'Unspecified') { $d.Media }), $(if ($d.Size) { Format-Size $d.Size }),
                      $(if ($d.Temp) { "$($d.Temp) °C" }), $(if ($null -ne $d.Wear) { "usura $($d.Wear)%" }), $(if ($d.Hours) { "$($d.Hours) ore" })) | Where-Object { $_ }
             $col = if ($ok) { '#34D399' } elseif ($d.Health -eq 'Warning') { '#FBBF24' } else { '#F87171' }
-            $ui.HHealth.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($HealthTpl -f [Security.SecurityElement]::Escape($d.Name), [Security.SecurityElement]::Escape($det -join '  ·  '), $st, $col)))) | Out-Null
+            $ui.HHealth.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($HealthTpl -f [Security.SecurityElement]::Escape($d.Name), [Security.SecurityElement]::Escape($det -join '  ·  '), (T $st), $col)))) | Out-Null
         }
         if ($i.Bat) {
             $h = $i.Bat.Health
@@ -3999,11 +5050,14 @@ $timer.Add_Tick({
             if (-not $d.Size) { continue }
             $pct = [int][Math]::Round(($d.Size - $d.Free) / $d.Size * 100)
             $name = [Security.SecurityElement]::Escape("$($d.Name)  $($d.Label)")
-            $txt  = [Security.SecurityElement]::Escape("$(Format-Size $d.Free) liberi di $(Format-Size $d.Size)")
+            $txt  = [Security.SecurityElement]::Escape((T "$(Format-Size $d.Free) liberi di $(Format-Size $d.Size)"))
             $col  = if ($pct -ge 90) { '#F87171' } elseif ($pct -ge 75) { '#FBBF24' } else { '#8B6CFF' }
             $ui.HDisks.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($DiskTpl -f $name, $txt, $pct, (100 - $pct), $col)))) | Out-Null
         }
     }
+
+    # Seconda istanza: porta la finestra in primo piano
+    if ($ShowEvt.WaitOne(0)) { Show-Main; $win.Topmost = $true; $win.Topmost = $false }
 
     # Preparazione sezioni
     if ($sync.PrefetchStatus -and $sync.PrefetchStatus -ne $State.PrefShown) {
@@ -4017,7 +5071,7 @@ $timer.Add_Tick({
         if ($sync.HwToast) { Toast $sync.HwToast; $sync.HwToast = $null }
         if ($sync.LhmResult) {
             $ui.HwAdv.IsEnabled = $true
-            if ($sync.LhmResult -eq 'ok') { $Settings.Lhm = $true; Save-Json 'settings.json' $Settings; Toast 'Sensori avanzati attivati'; Start-Sensors }
+            if ($sync.LhmResult -eq 'ok') { $Settings.Lhm = $true; Save-Settings; Toast 'Sensori avanzati attivati'; Start-Sensors }
             else { $ui.HwSensMsg.Text = "Installazione non riuscita: $($sync.LhmResult)" }
             $sync.LhmResult = $null
         }
@@ -4042,7 +5096,7 @@ $timer.Add_Tick({
                 $t = $State.Tiles[$se.K]
                 if (-not $t) {
                     $t = [Windows.Markup.XamlReader]::Parse((Apply-Theme $SensTpl))
-                    $t.FindName('n').Text = $se.N; $t.FindName('g').Text = $se.G; $t.ToolTip = "$($se.G) - $($se.N)"
+                    $t.FindName('n').Text = T $se.N; $t.FindName('g').Text = T $se.G; $t.ToolTip = "$($se.G) - $($se.N)"
                     [void]$ui.HwSens.Children.Add($t); $State.Tiles[$se.K] = $t
                 }
                 $val = if ($se.U -in 'RPM', 'MHz') { '{0:N0}' -f $se.V } else { '{0:N1}' -f $se.V }
@@ -4093,6 +5147,7 @@ $timer.Add_Tick({
             } else {
                 $ui.LSub.Text = $(if ($sync.ScanInfo) { $sync.ScanInfo } else { "$($Items.Count) elementi." }) + $State.CacheNote
                 $ui.LAll.IsEnabled = $true; $ui.LNone.IsEnabled = $true
+                $ui.LFilterBox.Visibility = Vis ($Items.Count -gt 8 -and -not $M.Search); $ui.LCsv.Visibility = 'Visible'
             }
         }
         'review' {
@@ -4111,6 +5166,7 @@ $timer.Add_Tick({
             if (-not $sync.Cancel) { $ui.LSub.Text = $sync.Status }
         }
         'done' {
+            [void][NativePow.Power]::SetThreadExecutionState(0x80000000)
             Invalidate-Cache
             if ($sync.ExtraRows) {
                 foreach ($r in $sync.ExtraRows.ToArray()) {
@@ -4125,7 +5181,7 @@ $timer.Add_Tick({
             Set-Busy $false
             $sum = if (@($Items | Where-Object { $_.StatusKind -in 'ok', 'err' }).Count) { Get-Counts $Items } else { '' }
             if ($sync.Extra) { $sum = (@($sum, $sync.Extra) | Where-Object { $_ }) -join '  ·  ' }
-            if ($sync.LastBackup) { $Settings.LastBackup = $sync.LastBackup; $sync.LastBackup = $null; Save-Json 'settings.json' $Settings; Update-BackupInfo }
+            if ($sync.LastBackup) { $Settings.LastBackup = $sync.LastBackup; $sync.LastBackup = $null; Save-Settings; Update-BackupInfo }
             if ($M.AfterDone -eq 'rescan') { Start-Scan; Toast $sum; return }
             if ($M.AfterDone -eq 'review') {
                 foreach ($it in $Items) { $it.Editable = $true; $it.Selected = $false }
@@ -4139,6 +5195,8 @@ $timer.Add_Tick({
             $ui.LSummary.Text = $sum
             try { Export-Report $sum } catch { Write-ErrLog "Rapporto: $($_.Exception.Message)" }
             if (-not $win.IsVisible -and $Tray.Visible) { $Tray.ShowBalloonTip(6000, 'MultiTool', "$($M.Title): $sum", 'Info') }
+            elseif (-not $win.IsActive) { Show-Toast "MultiTool - $($M.Title)" $(if ($sum) { $sum } else { 'Operazione completata' }) }
+            $ui.LCsv.Visibility = Vis ($Items.Count -gt 0)
             $ui.LGo.Visibility = 'Collapsed'; $ui.LGo2.Visibility = 'Collapsed'
             $ui.LCancel.Content = T 'CHIUDI'; $ui.LCancel.IsEnabled = $true
         }
@@ -4176,9 +5234,9 @@ $win.Add_Closing({
     $rb = $win.RestoreBounds
     if (-not $rb.IsEmpty) { $Settings.WinL = $rb.Left; $Settings.WinT = $rb.Top; $Settings.WinW = $rb.Width; $Settings.WinH = $rb.Height }
     $Settings.WinMax = ($win.WindowState -eq 'Maximized')
-    try { Save-Json 'settings.json' $Settings } catch {}
+    try { Save-Settings } catch {}
     if ($sync.Phase -eq 'run') {
-        $r = [Windows.MessageBox]::Show('Un''operazione è in corso: chiudendo ora potresti lasciare un''installazione a metà. Chiudere comunque?', 'MultiTool', 'YesNo', 'Warning')
+        $r = [MtTr]::Msg('Un''operazione è in corso: chiudendo ora potresti lasciare un''installazione a metà. Chiudere comunque?', 'MultiTool', 'YesNo', 'Warning')
         if ($r -ne 'Yes') { $e.Cancel = $true }
     }
 })
@@ -4208,7 +5266,13 @@ try {
     $el = Join-Path $DataDir 'Logs\errori.log'
     if ((Test-Path $el) -and (Get-Item $el).Length -gt 1MB) { (Get-Content $el -Tail 2000) | Set-Content $el -Encoding UTF8 }
 } catch {}
-$ui.AppVer.Text = "MultiTool $AppVersion"
+$ui.AppVer.Text = "MultiTool $AppVersion  ·  Ctrl+K per cercare"
+try {
+    Get-ChildItem (Join-Path $DataDir 'Rapporti') -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-90) -and $_.Name -notmatch '^(Consegna|Etichetta)-' } | Remove-Item -Force -ErrorAction SilentlyContinue
+    Get-ChildItem (Join-Path $DataDir 'DriverBackup') -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending |
+        Select-Object -Skip 3 | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+} catch {}
 if ($Settings.BackupDest -and (-not $Settings.LastBackup -or ((Get-Date) - [datetime]$Settings.LastBackup).TotalDays -gt 7)) {
     Toast "L'ultimo backup ha più di 7 giorni: vai nella sezione Backup"
 }
@@ -4218,4 +5282,8 @@ Start-UpdCheck
 Update-AutoInfo
 if ($Settings.TermsAccepted -ne $TermsVersion) { Show-About $true } else { Show-View 'ViewHome'; Start-Prefetch }
 Refresh-Info
+if ($Hidden -and $Settings.Tray) {
+    $win.ShowInTaskbar = $false; $win.WindowState = 'Minimized'
+    $win.Add_Loaded({ $win.Hide(); $win.WindowState = 'Normal'; $win.ShowInTaskbar = $true })
+}
 [void]$win.ShowDialog()

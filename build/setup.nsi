@@ -2,6 +2,7 @@ Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "x64.nsh"
+!include "WordFunc.nsh"
 
 !define APPNAME "MultiTool"
 !ifndef VERSION
@@ -60,6 +61,20 @@ Function .onInit
   ReadRegStr $0 HKLM "${UNKEY}" "InstallLocation"
   ${If} $0 != ""
     StrCpy $INSTDIR $0
+  ${EndIf}
+  ReadRegStr $1 HKLM "${UNKEY}" "DisplayVersion"
+  ${If} $1 != ""
+    ${VersionCompare} "${VERSION}" "$1" $2
+    ${If} $2 == 0
+      MessageBox MB_YESNO|MB_ICONQUESTION "MultiTool ${VERSION} è già installato.$\r$\n$\r$\nVuoi reinstallarlo? Impostazioni e dati verranno mantenuti." /SD IDYES IDYES +2
+      Abort
+    ${ElseIf} $2 == 1
+      MessageBox MB_YESNO|MB_ICONQUESTION "È installato MultiTool $1.$\r$\n$\r$\nVuoi aggiornarlo alla versione ${VERSION}? Impostazioni e dati verranno mantenuti." /SD IDYES IDYES +2
+      Abort
+    ${Else}
+      MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "È già installata una versione più recente di MultiTool ($1).$\r$\n$\r$\nQuesto installer contiene la versione ${VERSION}, più vecchia. Tornare alla versione precedente è sconsigliato.$\r$\n$\r$\nInstallare comunque la ${VERSION}?" /SD IDNO IDYES +2
+      Abort
+    ${EndIf}
   ${EndIf}
 FunctionEnd
 

@@ -34,6 +34,15 @@ Requisiti: Windows 10 o 11 a 64 bit, diritti di amministratore. Per gli aggiorna
 | **Benchmark / Punti di ripristino** | Test CPU, RAM e disco con confronto; gestione dei punti di ripristino |
 | **Cronologia / Log / Impostazioni** | Storico operazioni, log, tema chiaro/scuro, inglese, area di notifica, pianificazioni |
 
+## Scorciatoie
+
+| Tasti | Azione |
+|---|---|
+| `Ctrl+K` | Ricerca rapida di sezioni e comandi |
+| `F5` | Ricarica la sezione aperta |
+| `Esc` | Annulla / torna alla Home |
+| `Ctrl+H` | Home |
+
 ## Struttura del repository
 
 ```
