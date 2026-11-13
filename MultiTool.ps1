@@ -3,7 +3,7 @@
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.13.1'
+$AppVersion = '2026.11.13.2'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
@@ -20,7 +20,7 @@ foreach ($d in $InstDir, $ProfDir, $DataDir) { if (-not (Test-Path $d)) { New-It
 # --- Elevazione (silenziosa) ---
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $Auto -and -not $Backup -and -not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`"" + $(if ($Uninstall) { ' -Uninstall' } else { '' }))
+    Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -ArgumentList ("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`"" + $(if ($Uninstall) { ' -Uninstall' } elseif ($Hidden) { ' -Hidden' } else { '' }))
     exit
 }
 
@@ -198,7 +198,7 @@ function Get-Settings {
     $def = @{ Restore = $true; AutoEnabled = $false; AutoDay = 'Sunday'; AutoTime = '12:00'; Theme = 'dark'; Tray = $true; UpdateUrl = 'https://raw.githubusercontent.com/Erodyne/MultiTool/main'
               WinL = $null; WinT = $null; WinW = $null; WinH = $null; WinMax = $false; Lhm = $false
               ShopName = ''; ShopPhone = ''; ShopEmail = ''; ShopWeb = ''; ShopLogo = ''; WarrantyMonths = 24
-              BackupDest = ''; LastBackup = ''; BackupAuto = $false; BackupTime = '13:00'; SensLog = $false; Lang = 'it'; Prefetch = $true; AutoSelfUpdate = $true; TermsAccepted = ''; AutoFull = $false }
+              BackupDest = ''; LastBackup = ''; BackupAuto = $false; BackupTime = '13:00'; SensLog = $false; Lang = 'it'; Prefetch = $true; AutoSelfUpdate = $true; TermsAccepted = ''; AutoFull = $false; StartWithWindows = $false; Zoom = 1.0 }
     foreach ($k in $def.Keys) { if (-not ($s.PSObject.Properties.Name -contains $k)) { $s | Add-Member -NotePropertyName $k -NotePropertyValue $def[$k] -Force } }
     $s
 }
@@ -331,6 +331,10 @@ function Remove-Items($Paths, [int]$MinAgeHours = 0) {
     }
 }
 function Invoke-CleanTarget($t) {
+    $procs = @{ edge = 'msedge'; chrome = 'chrome'; firefox = 'firefox' }
+    if ($procs.ContainsKey($t.Id) -and (Get-Process $procs[$t.Id] -ErrorAction SilentlyContinue)) {
+        return [pscustomobject]@{ Freed = 0; After = (Get-DirSize $t.Paths $t.Age); Busy = $true }
+    }
     $before = if ($t.Id -eq 'recycle') { Get-RecycleSize } else { Get-DirSize $t.Paths $t.Age }
     switch ($t.Id) {
         'recycle' { Clear-RecycleBin -Force -ErrorAction SilentlyContinue }
@@ -753,7 +757,7 @@ function Get-BackupFolders {
 }
 function Invoke-FolderBackup([string]$Src, [string]$Dest) {
     New-Item -ItemType Directory -Path $Dest -Force | Out-Null
-    $a = "`"$Src`" `"$Dest`" /E /XO /R:1 /W:1 /MT:8 /NP /NFL /NDL /XJ /XA:S"
+    $a = "`"$Src`" `"$Dest`" /E /XO /R:1 /W:1 /MT:8 /NP /NFL /NDL /XJ /XA:SO"
     $r = Invoke-Hidden "$env:SystemRoot\System32\robocopy.exe" $a
     $m = [regex]::Match($r.Out, '(?m)^\s*(File|Files)\s*:\s*(\d+)\s+(\d+)')
     [pscustomobject]@{ Code = $r.Code; Copied = $(if ($m.Success) { [int]$m.Groups[3].Value } else { -1 }) }
@@ -1611,6 +1615,97 @@ MultiTool è installato in {0}, con collegamenti nel menu Start e sul desktop.\n
 Il PC verrà riportato allo stato del punto selezionato e si RIAVVIERÀ SUBITO. I tuoi file personali non vengono toccati, ma programmi e driver installati dopo verranno rimossi. Salva il lavoro aperto. Procedere? ⇒ The PC will be returned to the selected point and will RESTART IMMEDIATELY. Your personal files are not touched, but apps and drivers installed afterwards will be removed. Save your open work. Proceed?
 MultiTool è già aperto (controlla anche l'area di notifica). ⇒ MultiTool is already open (check the notification area too).
 dati delle {0} ⇒ data from {0}
+Servizi ⇒ Services
+Processi ⇒ Processes
+File grandi ⇒ Large files
+Eventi di sistema ⇒ System events
+Leggo i servizi… ⇒ Reading services…
+Lettura dei servizi… ⇒ Reading services…
+automatico ⇒ automatic
+manuale ⇒ manual
+in esecuzione ⇒ running
+fermo ⇒ stopped
+{0} servizi di programmi non Microsoft. Impostarli su MANUALE alleggerisce l'avvio: partono solo quando servono. ⇒ {0} non-Microsoft app services. Setting them to MANUAL lightens startup: they start only when needed.
+Impostato su manuale ⇒ Set to manual
+Impostato su automatico ⇒ Set to automatic
+Imposto ⇒ Setting
+IMPOSTA MANUALE ⇒ SET TO MANUAL
+IMPOSTA AUTOMATICO ⇒ SET TO AUTOMATIC
+I servizi selezionati partiranno solo quando servono. Se un programma smette di funzionare, rimettilo su AUTOMATICO. Procedere? ⇒ The selected services will start only when needed. If an app stops working, set it back to AUTOMATIC. Proceed?
+Servizi di Windows ⇒ Windows services
+Nessun servizio di terze parti ⇒ No third-party services
+Misuro l'uso di CPU e memoria… ⇒ Measuring CPU and memory usage…
+sistema ⇒ system
+CPU alta ⇒ high CPU
+RAM alta ⇒ high RAM
+Gli 80 processi che usano più memoria. Quelli di sistema non si possono terminare. Le modifiche non salvate nei programmi terminati vanno perse. ⇒ The 80 processes using the most memory. System ones cannot be ended. Unsaved changes in ended apps are lost.
+Terminato ⇒ Ended
+Termino ⇒ Ending
+MEMORIA ⇒ MEMORY
+TERMINA ⇒ END
+Terminare {0} processi? Le modifiche non salvate in quei programmi andranno perse. ⇒ End {0} processes? Unsaved changes in those apps will be lost.
+Cerco i file più grandi in {0}… (può richiedere qualche minuto) ⇒ Looking for the largest files in {0}… (may take a few minutes)
+Analizzati {0} file… ⇒ {0} files scanned…
+non usato da 1 anno ⇒ unused for 1 year
+{0} file oltre 100 MB su {1} analizzati in {2}. Quelli eliminati vanno nel Cestino. ⇒ {0} files over 100 MB out of {1} scanned in {2}. Deleted ones go to the Recycle Bin.
+Nel Cestino ⇒ In the Recycle Bin
+Sposto nel Cestino ⇒ Moving to Recycle Bin
+Ricerca dei file più grandi… ⇒ Looking for the largest files…
+DIMENSIONE ⇒ SIZE
+MODIFICATO ⇒ MODIFIED
+SPOSTA NEL CESTINO ⇒ MOVE TO RECYCLE BIN
+Spostare {0} file nel Cestino? Potrai recuperarli finché non svuoti il Cestino. ⇒ Move {0} files to the Recycle Bin? You can recover them until you empty the Recycle Bin.
+Apri percorso ⇒ Open location
+Seleziona prima un file ⇒ Select a file first
+Cerca in tutto il disco ⇒ Search the whole disk
+Nessun file oltre 100 MB ⇒ No files over 100 MB
+Leggo il registro eventi di sistema… ⇒ Reading the system event log…
+Leggo gli arresti anomali dei programmi… ⇒ Reading app crashes…
+schermata blu ⇒ blue screen
+spegnimento anomalo ⇒ unexpected shutdown
+critico ⇒ critical
+programma ⇒ app
+{0} volte ⇒ {0} times
+Arresto anomalo: {0} ⇒ Crash: {0}
+Modulo: {0} ⇒ Module: {0}
+Ultimi 7 giorni: {0} errori di sistema ⇒ Last 7 days: {0} system errors
+{0} schermate blu ⇒ {0} blue screens
+{0} spegnimenti anomali ⇒ {0} unexpected shutdowns
+{0} arresti di programmi ⇒ {0} app crashes
+Lettura del registro eventi… ⇒ Reading the event log…
+QUANTE VOLTE ⇒ HOW MANY TIMES
+ULTIMA ⇒ LAST
+Visualizzatore eventi ⇒ Event Viewer
+Affidabilità ⇒ Reliability
+Nessun errore negli ultimi 7 giorni ⇒ No errors in the last 7 days
+Windows non ha registrato errori critici, schermate blu o arresti anomali. ⇒ Windows logged no critical errors, blue screens or crashes.
+Segui il tema di Windows ⇒ Follow the Windows theme
+Avvia con Windows (nell'area di notifica) ⇒ Start with Windows (in the notification area)
+Zoom dell'interfaccia: Ctrl + e Ctrl − per ingrandire o ridurre, Ctrl 0 per tornare al normale. ⇒ Interface zoom: Ctrl + and Ctrl − to zoom in or out, Ctrl 0 to reset.
+MultiTool partirà con Windows nell'area di notifica ⇒ MultiTool will start with Windows in the notification area
+Avvio con Windows disattivato ⇒ Start with Windows turned off
+Avvio con Windows non impostato: {0} ⇒ Start with Windows not set: {0}
+Rapporto batteria ⇒ Battery report
+Questo PC non ha una batteria ⇒ This PC has no battery
+Creo il rapporto batteria… ⇒ Creating the battery report…
+Rapporto batteria non riuscito ⇒ Battery report failed
+Gestione disco ⇒ Disk Management
+Monitoraggio risorse ⇒ Resource Monitor
+Configurazione di sistema ⇒ System Configuration
+Pannello di controllo ⇒ Control Panel
+Pulizia disco di Windows ⇒ Windows Disk Cleanup
+Utilità di pianificazione ⇒ Task Scheduler
+Monitoraggio affidabilità ⇒ Reliability Monitor
+Manutenzione: non eseguita da oltre 30 giorni ⇒ Maintenance: not run for over 30 days
+Browser aperto: chiudilo e riprova ⇒ Browser open: close it and try again
+Attendi la fine dell'operazione in corso prima di riavviare ⇒ Wait for the current operation to finish before restarting
+Nome ⇒ Name
+Dettaglio ⇒ Detail
+Esito ⇒ Result
+Elemento ⇒ Item
+Prima ⇒ Before
+Dopo ⇒ After
+Generato da MultiTool ⇒ Generated by MultiTool
 '@
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml
 if (-not ('MtTr' -as [type])) {
@@ -1724,6 +1819,11 @@ if (-not $Mutex.WaitOne(0)) {
     exit
 }
 $Settings = Get-Settings
+$EffTheme = [string]$Settings.Theme
+if ($EffTheme -eq 'auto') {
+    $EffTheme = 'dark'
+    try { if ((Get-ItemPropertyValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' AppsUseLightTheme -ErrorAction Stop) -eq 1) { $EffTheme = 'light' } } catch {}
+}
 
 $ThemeMap = @{
     '#0B0D12' = '#F4F5F9'; '#12151D' = '#FFFFFF'; '#131722' = '#FFFFFF'; '#141823' = '#EEF0F5'; '#151925' = '#F7F7FB'
@@ -1736,7 +1836,7 @@ $ThemeMap = @{
     '#33280F' = '#FFF1CC'; '#231D10' = '#FFF6DB'; '#4A3A15' = '#F0D58A'; '#F3E2B5' = '#5A4510'; '#22D3EE' = '#0891B2'
 }
 function Apply-Theme([string]$Text) {
-    if ($Settings.Theme -ne 'light') { return $Text }
+    if ($EffTheme -ne 'light') { return $Text }
     [regex]::Replace($Text, '#[0-9A-Fa-f]{6}(?![0-9A-Fa-f])', { param($m) $k = $m.Value.ToUpper(); if ($ThemeMap.ContainsKey($k)) { $ThemeMap[$k] } else { $m.Value } })
 }
 
@@ -2162,8 +2262,12 @@ $xaml = @'
             <RadioButton x:Name="NavWU"        Style="{StaticResource Nav}" Tag="&#xE777;" Content="Windows Update"/>
             <RadioButton x:Name="NavDrivers"   Style="{StaticResource Nav}" Tag="&#xE950;" Content="Driver"/>
             <RadioButton x:Name="NavStartup"   Style="{StaticResource Nav}" Tag="&#xE7E8;" Content="Avvio automatico"/>
+            <RadioButton x:Name="NavServices"  Style="{StaticResource Nav}" Tag="&#xE912;" Content="Servizi"/>
+            <RadioButton x:Name="NavProcesses" Style="{StaticResource Nav}" Tag="&#xE9D9;" Content="Processi"/>
             <RadioButton x:Name="NavCleanup"   Style="{StaticResource Nav}" Tag="&#xE894;" Content="Pulizia disco"/>
+            <RadioButton x:Name="NavBigFiles"  Style="{StaticResource Nav}" Tag="&#xE8B7;" Content="File grandi"/>
             <RadioButton x:Name="NavRepair"    Style="{StaticResource Nav}" Tag="&#xE90F;" Content="Riparazione"/>
+            <RadioButton x:Name="NavEvents"    Style="{StaticResource Nav}" Tag="&#xE7BA;" Content="Eventi di sistema"/>
             <RadioButton x:Name="NavPrivacy"   Style="{StaticResource Nav}" Tag="&#xE72E;" Content="Privacy"/>
             <RadioButton x:Name="NavSecurity"  Style="{StaticResource Nav}" Tag="&#xEA18;" Content="Sicurezza"/>
             <RadioButton x:Name="NavNetwork"   Style="{StaticResource Nav}" Tag="&#xE774;" Content="Rete"/>
@@ -2462,6 +2566,7 @@ $xaml = @'
               <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom">
                 <Button x:Name="HwHist" Style="{StaticResource LinkBtn}" Content="Storico sensori"/>
                 <Button x:Name="HwLabel" Style="{StaticResource LinkBtn}" Content="Etichetta QR"/>
+                <Button x:Name="HwBat" Style="{StaticResource LinkBtn}" Content="Rapporto batteria"/>
                 <Button x:Name="HwAdv" Style="{StaticResource LinkBtn}" Content="Attiva sensori avanzati"/>
                 <Button x:Name="HwExport" Style="{StaticResource LinkBtn}" Content="Esporta inventario"/>
                 <Button x:Name="HwReload" Style="{StaticResource LinkBtn}" Content="Aggiorna"/>
@@ -2630,10 +2735,13 @@ $xaml = @'
                 <Border Style="{StaticResource Card}">
                   <StackPanel>
                     <TextBlock Text="ASPETTO E AVVIO" Style="{StaticResource CardLabel}"/>
-                    <CheckBox x:Name="SetLight" Style="{StaticResource Switch}" Margin="0,16,0,0" FontSize="14" Content="Tema chiaro (riavvia MultiTool)"/>
+                    <CheckBox x:Name="SetAutoTheme" Style="{StaticResource Switch}" Margin="0,16,0,0" FontSize="14" Content="Segui il tema di Windows"/>
+                    <CheckBox x:Name="SetLight" Style="{StaticResource Switch}" Margin="0,14,0,0" FontSize="14" Content="Tema chiaro (riavvia MultiTool)"/>
+                    <CheckBox x:Name="SetStartup" Style="{StaticResource Switch}" Margin="0,14,0,0" FontSize="14" Content="Avvia con Windows (nell'area di notifica)"/>
                     <CheckBox x:Name="SetTray" Style="{StaticResource Switch}" Margin="0,14,0,0" FontSize="14" Content="Riduci nell'area di notifica"/>
                     <CheckBox x:Name="SetPrefetch" Style="{StaticResource Switch}" Margin="0,14,0,0" FontSize="14" Content="Prepara tutte le sezioni all'avvio"/>
                     <TextBlock Text="Con l'icona nell'area di notifica MultiTool controlla gli aggiornamenti ogni 6 ore e ti avvisa." Foreground="#6B7290" FontSize="12" Margin="50,6,0,0" TextWrapping="Wrap"/>
+                    <TextBlock Text="Zoom dell'interfaccia: Ctrl + e Ctrl − per ingrandire o ridurre, Ctrl 0 per tornare al normale." Foreground="#6B7290" FontSize="12" Margin="50,6,0,0" TextWrapping="Wrap"/>
                   </StackPanel>
                 </Border>
                 <Border Style="{StaticResource Card}">
@@ -2763,6 +2871,14 @@ $xaml = @'
 '@
 
 $TrEn = New-Object System.Collections.Hashtable ([StringComparer]::Ordinal)
+$TrEn['Servizi'] = 'Services'
+$TrEn['Processi'] = 'Processes'
+$TrEn['File grandi'] = 'Large files'
+$TrEn['Eventi di sistema'] = 'System events'
+$TrEn['Segui il tema di Windows'] = 'Follow the Windows theme'
+$TrEn['Avvia con Windows (nell''area di notifica)'] = 'Start with Windows (in the notification area)'
+$TrEn['Zoom dell''interfaccia: Ctrl + e Ctrl − per ingrandire o ridurre, Ctrl 0 per tornare al normale.'] = 'Interface zoom: Ctrl + and Ctrl − to zoom in or out, Ctrl 0 to reset.'
+$TrEn['Rapporto batteria'] = 'Battery report'
 $TrEn['AGGIORNAMENTI DI MULTITOOL'] = 'MULTITOOL UPDATES'
 $TrEn['AGGIORNAMENTO AUTOMATICO'] = 'AUTOMATIC UPDATE'
 $TrEn['ALTRO'] = 'OTHER'
@@ -3025,7 +3141,12 @@ function Clear-Jobs {
 
 function G([int]$c) { [string][char]$c }
 function Vis($b) { if ($b) { 'Visible' } else { 'Collapsed' } }
-function Toast([string]$t) { [void]$State.Q.Add((T $t)) }
+function Toast([string]$t) {
+    $t = T $t
+    if ($State.Q.Contains($t)) { return }
+    while ($State.Q.Count -ge 5) { $State.Q.RemoveAt(0) }
+    [void]$State.Q.Add($t)
+}
 
 # ============================================================
 #  Codice delle analisi e delle azioni (eseguito in background)
@@ -3313,7 +3434,8 @@ Invoke-Each $items {
     $r = Invoke-CleanTarget $t
     $sync.Freed += $r.Freed
     $it.C1 = Format-Size $r.After
-    Set-It $it 'ok' ("Liberati " + (Format-Size $r.Freed))
+    if ($r.Busy) { Set-It $it 'skip' 'Browser aperto: chiudilo e riprova' }
+    else { Set-It $it 'ok' ("Liberati " + (Format-Size $r.Freed)) }
 } 'Pulisco'
 $sync.Extra = "Spazio liberato: $(Format-Size $sync.Freed)"
 '@
@@ -3759,6 +3881,117 @@ if ($op -eq 'create') {
 }
 '@
 
+
+$ScanServices = @'
+$sync.Status = 'Leggo i servizi…'
+$win = "$env:SystemRoot\".ToLower()
+foreach ($sv in Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | Sort-Object DisplayName) {
+    $path = [string]$sv.PathName
+    $exe = if ($path -match '^"([^"]+)"') { $Matches[1] } else { ($path -split ' -| /')[0].Trim() }
+    if (-not $exe -or $exe.ToLower().StartsWith($win)) { continue }
+    $co = ''
+    try { $co = [Diagnostics.FileVersionInfo]::GetVersionInfo($exe).CompanyName } catch {}
+    if ($co -match '^Microsoft') { continue }
+    $mode = switch ($sv.StartMode) { 'Auto' { 'automatico' } 'Manual' { 'manuale' } 'Disabled' { 'disattivato' } default { [string]$sv.StartMode } }
+    $rows.Add((New-Row @{ Name = $sv.DisplayName; Sub = "$(if ($co) { "$co  ·  " })$exe"; Key = $sv.Name; C1 = $mode
+        C2 = $(if ($sv.State -eq 'Running') { 'in esecuzione' } else { 'fermo' }); Tag = $mode
+        TagKind = $(switch ($sv.StartMode) { 'Auto' { 'info' } 'Disabled' { 'warn' } default { 'none' } }) })) | Out-Null
+}
+$sync.ScanInfo = "$($rows.Count) servizi di programmi non Microsoft. Impostarli su MANUALE alleggerisce l'avvio: partono solo quando servono."
+'@
+
+$ActServices = @'
+Invoke-Each $items {
+    param($it)
+    $type = if ($op -eq 'manual') { 'Manual' } else { 'Automatic' }
+    Set-Service -Name $it.Key -StartupType $type -ErrorAction Stop
+    $it.C1 = $(if ($op -eq 'manual') { 'manuale' } else { 'automatico' }); $it.Tag = $it.C1
+    Set-It $it 'ok' $(if ($op -eq 'manual') { 'Impostato su manuale' } else { 'Impostato su automatico' })
+} 'Imposto'
+'@
+
+$ScanProcesses = @'
+$sync.Status = 'Misuro l''uso di CPU e memoria…'
+$crit = 'Idle', 'System', 'Registry', 'smss', 'csrss', 'wininit', 'winlogon', 'services', 'lsass', 'svchost', 'dwm', 'fontdrvhost', 'Memory Compression', 'MsMpEng', 'SecurityHealthService', 'spoolsv', 'audiodg', 'sihost', 'ctfmon'
+$a = @{}; foreach ($p in Get-Process -ErrorAction SilentlyContinue) { try { $a[$p.Id] = $p.TotalProcessorTime.TotalMilliseconds } catch {} }
+Start-Sleep -Milliseconds 1000
+$cores = [Environment]::ProcessorCount
+$list = foreach ($p in Get-Process -ErrorAction SilentlyContinue) {
+    $cpu = 0; try { if ($a.ContainsKey($p.Id)) { $cpu = ($p.TotalProcessorTime.TotalMilliseconds - $a[$p.Id]) / 10 / $cores } } catch {}
+    [pscustomobject]@{ P = $p; Cpu = [math]::Max(0, $cpu); Ram = $p.WorkingSet64 }
+}
+foreach ($x in $list | Sort-Object Ram -Descending | Select-Object -First 80) {
+    $p = $x.P; $desc = ''; $path = ''
+    try { $path = $p.Path; $desc = $p.MainModule.FileVersionInfo.FileDescription } catch {}
+    $isCrit = ($crit -contains $p.ProcessName) -or $p.Id -eq $PID -or $p.SessionId -eq 0
+    $rows.Add((New-Row @{ Name = $(if ($desc) { "$desc ($($p.ProcessName))" } else { $p.ProcessName }); Sub = $(if ($path) { $path } else { "PID $($p.Id)" })
+        Key = [string]$p.Id; C1 = (Format-Size $x.Ram); C2 = ('{0:N1} %' -f $x.Cpu); Checkable = (-not $isCrit)
+        Tag = $(if ($isCrit) { 'sistema' } elseif ($x.Cpu -ge 25) { 'CPU alta' } elseif ($x.Ram -ge 1GB) { 'RAM alta' } else { '' })
+        TagKind = $(if ($isCrit) { 'none' } else { 'warn' }) })) | Out-Null
+}
+$sync.ScanInfo = 'Gli 80 processi che usano più memoria. Quelli di sistema non si possono terminare. Le modifiche non salvate nei programmi terminati vanno perse.'
+'@
+
+$ActProcesses = @'
+Invoke-Each $items { param($it) Stop-Process -Id ([int]$it.Key) -Force -ErrorAction Stop; Set-It $it 'ok' 'Terminato' } 'Termino'
+'@
+
+$ScanBigFiles = @'
+$root = if ($all) { "$env:SystemDrive\" } else { $env:USERPROFILE }
+$skip = "$env:SystemRoot".ToLower()
+$sync.Status = "Cerco i file più grandi in $root… (può richiedere qualche minuto)"
+$big = New-Object System.Collections.Generic.List[object]
+$n = 0
+foreach ($f in Get-ChildItem $root -Recurse -File -Force -ErrorAction SilentlyContinue) {
+    $n++; if ($n % 5000 -eq 0) { $sync.Status = "Analizzati $n file…" }
+    if ($f.Length -lt 100MB) { continue }
+    if ($f.FullName.ToLower().StartsWith($skip) -or ($f.Attributes -band [IO.FileAttributes]::Offline) -or $f.Name -in 'pagefile.sys', 'hiberfil.sys', 'swapfile.sys') { continue }
+    $big.Add($f)
+}
+foreach ($f in $big | Sort-Object Length -Descending | Select-Object -First 100) {
+    $rows.Add((New-Row @{ Name = $f.Name; Sub = $f.DirectoryName; Key = $f.FullName; C1 = (Format-Size $f.Length); C2 = $f.LastWriteTime.ToString('dd/MM/yyyy')
+        Tag = $(if ($f.LastAccessTime -lt (Get-Date).AddYears(-1)) { 'non usato da 1 anno' } else { '' }); TagKind = 'warn' })) | Out-Null
+}
+$sync.ScanInfo = "$($rows.Count) file oltre 100 MB su $n analizzati in $root. Quelli eliminati vanno nel Cestino."
+'@
+
+$ActBigFiles = @'
+Add-Type -AssemblyName Microsoft.VisualBasic
+Invoke-Each $items {
+    param($it)
+    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($it.Key, 'OnlyErrorDialogs', 'SendToRecycleBin')
+    Set-It $it 'ok' 'Nel Cestino'
+} 'Sposto nel Cestino'
+'@
+
+$ScanEvents = @'
+$since = (Get-Date).AddDays(-7)
+$sync.Status = 'Leggo il registro eventi di sistema…'
+$nBsod = 0; $nPow = 0; $nApp = 0; $nErr = 0
+$sys = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; Level = 1, 2; StartTime = $since } -MaxEvents 1000 -ErrorAction SilentlyContinue)
+foreach ($g in $sys | Group-Object ProviderName, Id | Sort-Object Count -Descending) {
+    $e = $g.Group | Sort-Object TimeCreated -Descending | Select-Object -First 1
+    $msg = (([string]$e.Message) -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 1)
+    if ($msg.Length -gt 160) { $msg = $msg.Substring(0, 160) + '…' }
+    $tag = 'errore'; $kind = 'warn'
+    if ($e.ProviderName -match 'WER-SystemErrorReporting|BugCheck') { $tag = 'schermata blu'; $kind = 'err'; $nBsod += $g.Count }
+    elseif ($e.ProviderName -eq 'Microsoft-Windows-Kernel-Power' -and $e.Id -eq 41) { $tag = 'spegnimento anomalo'; $kind = 'err'; $nPow += $g.Count }
+    elseif ($e.Level -eq 1) { $tag = 'critico'; $kind = 'err' }
+    $nErr += $g.Count
+    $rows.Add((New-Row @{ Name = "$($e.ProviderName -replace '^Microsoft-Windows-', '') (ID $($e.Id))"; Sub = $msg; C1 = "$($g.Count) volte"
+        C2 = $e.TimeCreated.ToString('dd/MM HH:mm'); Tag = $tag; TagKind = $kind; Checkable = $false; Glyph = [string][char]0xE7BA })) | Out-Null
+}
+$sync.Status = 'Leggo gli arresti anomali dei programmi…'
+$apps = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'Application Error'; Id = 1000; StartTime = $since } -MaxEvents 300 -ErrorAction SilentlyContinue)
+foreach ($g in $apps | Group-Object { $_.Properties[0].Value } | Sort-Object Count -Descending) {
+    $e = $g.Group | Sort-Object TimeCreated -Descending | Select-Object -First 1
+    $nApp += $g.Count
+    $rows.Add((New-Row @{ Name = "Arresto anomalo: $($g.Name)"; Sub = "Modulo: $($e.Properties[3].Value)"; C1 = "$($g.Count) volte"
+        C2 = $e.TimeCreated.ToString('dd/MM HH:mm'); Tag = 'programma'; TagKind = 'warn'; Checkable = $false; Glyph = [string][char]0xE7BA })) | Out-Null
+}
+$sync.ScanInfo = "Ultimi 7 giorni: $nErr errori di sistema  ·  $nBsod schermate blu  ·  $nPow spegnimenti anomali  ·  $nApp arresti di programmi"
+'@
+
 $InfoCode = @'
 $info = @{}
 try {
@@ -3936,6 +4169,34 @@ $Modes = @{
         X2 = @{ Text = 'Ripristina driver da backup'; Click = { Restore-DriverBackup } }
         Empty = @{ Glyph = (G 0xE7A7); Title = 'Nessun punto di ripristino'; Text = 'Premi CREA PUNTO: verrà attivata anche la protezione sistema.' } }
 
+    services = @{ Nav = 'NavServices'; Title = 'Servizi'; Glyph = (G 0xE912); AfterDone = 'review'
+        Sub = 'Lettura dei servizi…'; H = 'AVVIO', 'STATO', '', 'ESITO'; Scan = $ScanServices; Action = $ActServices; Restore = $true
+        Go = 'IMPOSTA MANUALE'; GoOp = 'manual'; Go2 = 'IMPOSTA AUTOMATICO'; Go2Op = 'auto'
+        ConfirmOp = @{ manual = 'I servizi selezionati partiranno solo quando servono. Se un programma smette di funzionare, rimettilo su AUTOMATICO. Procedere?' }
+        X1 = @{ Text = 'Servizi di Windows'; Click = { Start-Process services.msc } }
+        X2 = @{ Text = 'Ricarica'; Click = { Start-Scan } }
+        Empty = @{ Glyph = (G 0xE912); Title = 'Nessun servizio di terze parti'; Text = '' } }
+
+    processes = @{ Nav = 'NavProcesses'; Title = 'Processi'; Glyph = (G 0xE9D9); AfterDone = 'rescan'
+        Sub = 'Misuro l''uso di CPU e memoria…'; H = 'MEMORIA', 'CPU', '', 'ESITO'; Scan = $ScanProcesses; Action = $ActProcesses; Go = 'TERMINA'
+        Confirm = 'Terminare {0} processi? Le modifiche non salvate in quei programmi andranno perse.'
+        X1 = @{ Text = 'Gestione attività'; Click = { Start-Process taskmgr.exe } }
+        X2 = @{ Text = 'Aggiorna'; Click = { Start-Scan } }
+        Empty = @{ Glyph = (G 0xE9D9); Title = ''; Text = '' } }
+
+    bigfiles = @{ Nav = 'NavBigFiles'; Title = 'File grandi'; Glyph = (G 0xE8B7); AfterDone = 'review'
+        Sub = 'Ricerca dei file più grandi…'; H = 'DIMENSIONE', 'MODIFICATO', '', 'ESITO'; Scan = $ScanBigFiles; Action = $ActBigFiles; Go = 'SPOSTA NEL CESTINO'
+        Confirm = 'Spostare {0} file nel Cestino? Potrai recuperarli finché non svuoti il Cestino.'
+        X1 = @{ Text = 'Apri percorso'; Click = { $s = @($Items | Where-Object Selected | Select-Object -First 1); if ($s) { Start-Process explorer.exe "/select,`"$($s[0].Key)`"" } else { Toast 'Seleziona prima un file' } } }
+        X2 = @{ Text = 'Cerca in tutto il disco'; Click = { $State.Vars = @{ all = $true }; Start-Scan } }
+        Empty = @{ Glyph = (G 0xE8B7); Title = 'Nessun file oltre 100 MB'; Text = '' } }
+
+    events = @{ Nav = 'NavEvents'; Title = 'Eventi di sistema'; Glyph = (G 0xE7BA); Checks = $false
+        Sub = 'Lettura del registro eventi…'; H = 'QUANTE VOLTE', 'ULTIMA', 'TIPO', ''; Scan = $ScanEvents
+        X1 = @{ Text = 'Visualizzatore eventi'; Click = { Start-Process eventvwr.msc } }
+        X2 = @{ Text = 'Affidabilità'; Click = { Start-Process perfmon.exe '/rel' } }
+        Empty = @{ Glyph = (G 0xE73E); Title = 'Nessun errore negli ultimi 7 giorni'; Text = 'Windows non ha registrato errori critici, schermate blu o arresti anomali.' } }
+
     exclusions = @{ Nav = 'NavSettings'; Title = 'Esclusioni'; Glyph = (G 0xE72E); AfterDone = 'rescan'
         Sub = 'Programmi che non verranno mai aggiornati.'; H = '', '', '', 'STATO'
         Scan = $ScanExclusions; Action = $ActExclusions; Go = 'RIMUOVI ESCLUSIONE'
@@ -4006,7 +4267,7 @@ function Reset-Footer {
 
 function Start-Scan([hashtable]$Vars) {
     $M = $Modes[$State.Mode]
-    if ($M.Online -and -not (Test-Online)) {
+    if ($M.Online -and $sync.Online -eq $false) {
         $Items.Clear(); Reset-Footer; $ui.LGo.Visibility = 'Collapsed'; $ui.LGo2.Visibility = 'Collapsed'
         $sync.Token++; $sync.Phase = 'review'
         Show-Empty @{ Glyph = (G 0xE774); Title = 'Nessuna connessione a internet'; Text = 'Questa sezione ha bisogno di internet. Collegati e premi F5 o Ricarica.' }
@@ -4030,12 +4291,15 @@ function Start-Scan([hashtable]$Vars) {
 # --- Preparazione delle sezioni in background ---
 $sync.Cache = [hashtable]::Synchronized(@{})
 $PrefetchOrder = 'full', 'deliver', 'updates', 'installers', 'profiles', 'uninstall', 'backup', 'hw', 'wu', 'drivers',
-                 'startup', 'cleanup', 'repair', 'privacy', 'security', 'network', 'bench', 'restore', 'history'
+                 'startup', 'services', 'cleanup', 'repair', 'privacy', 'security', 'network', 'events', 'bench', 'restore', 'history'
 $PrefetchCode = @'
 $realSync = $sync
 try { [Threading.Thread]::CurrentThread.Priority = 'BelowNormal' } catch {}
 $online = Test-Online
 if (-not $online) { $list = @($list | Where-Object { $_ -notin 'updates', 'wu' }) }
+$onBat = $false
+try { $onBat = [bool](Get-CimInstance Win32_Battery -ErrorAction Stop | Where-Object { $_.BatteryStatus -eq 1 }) } catch {}
+if ($onBat) { $list = @($list | Where-Object { $_ -notin 'cleanup', 'wu', 'events', 'services' }) }
 $i = 0
 foreach ($m in $list) {
     $i++
@@ -4394,12 +4658,23 @@ function Export-ListCsv {
     if (-not $d.ShowDialog($win)) { return }
     $h = @($M.H)
     $Items | ForEach-Object {
-        $o = [ordered]@{ Nome = $_.Name; Dettaglio = $_.Sub }
-        if ($h[0]) { $o[$h[0]] = $_.C1 }; if ($h[1]) { $o[$h[1]] = $_.C2 }; if ($h[2]) { $o[$h[2]] = $_.Tag }
-        $o['Esito'] = $_.Status
+        $o = [ordered]@{}; $o[(T 'Nome')] = $_.Name; $o[(T 'Dettaglio')] = $_.Sub
+        if ($h[0]) { $o[(T $h[0])] = $_.C1 }; if ($h[1]) { $o[(T $h[1])] = $_.C2 }; if ($h[2]) { $o[(T $h[2])] = $_.Tag }
+        $o[(T 'Esito')] = $_.Status
         [pscustomobject]$o
     } | Export-Csv -Path $d.FileName -Delimiter ';' -NoTypeInformation -Encoding UTF8
     Toast "Esportato: $(Split-Path $d.FileName -Leaf)"
+}
+
+function New-BatteryReport {
+    if (-not (Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue)) { Toast 'Questo PC non ha una batteria'; return }
+    Toast 'Creo il rapporto batteria…'
+    Start-Bg @'
+$dir = Join-Path $DataDir 'Rapporti'; New-Item -ItemType Directory -Path $dir -Force | Out-Null
+$f = Join-Path $dir ("batteria-{0}.html" -f (Get-Date -Format 'yyyyMMdd-HHmm'))
+Invoke-Hidden "$env:SystemRoot\System32\powercfg.exe" "/batteryreport /output `"$f`"" | Out-Null
+if (Test-Path $f) { Start-Process $f } else { $sync.Toast = 'Rapporto batteria non riuscito' }
+'@ @{}
 }
 
 # --- Ricerca rapida (Ctrl+K) ---
@@ -4421,6 +4696,17 @@ foreach ($c in @(
     @{ N = 'Informazioni e note legali'; A = { Show-About $false } }
     @{ N = 'Apri cartella dati'; A = { Start-Process explorer.exe $DataDir } }
     @{ N = 'Gestione dispositivi'; A = { Start-Process devmgmt.msc } }
+    @{ N = 'Rapporto batteria'; A = { New-BatteryReport } }
+    @{ N = 'Gestione disco'; A = { Start-Process diskmgmt.msc } }
+    @{ N = 'Visualizzatore eventi'; A = { Start-Process eventvwr.msc } }
+    @{ N = 'Servizi di Windows'; A = { Start-Process services.msc } }
+    @{ N = 'Monitoraggio risorse'; A = { Start-Process resmon.exe } }
+    @{ N = 'Configurazione di sistema'; A = { Start-Process msconfig.exe } }
+    @{ N = 'Pannello di controllo'; A = { Start-Process control.exe } }
+    @{ N = 'Pulizia disco di Windows'; A = { Start-Process cleanmgr.exe } }
+    @{ N = 'Utilità di pianificazione'; A = { Start-Process taskschd.msc } }
+    @{ N = 'Gestione attività'; A = { Start-Process taskmgr.exe } }
+    @{ N = 'Monitoraggio affidabilità'; A = { Start-Process perfmon.exe '/rel' } }
     @{ N = 'Sicurezza di Windows'; A = { Start-Process 'windowsdefender:' } }
     @{ N = 'Riavvia il PC'; A = { $ui.RebootGo.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent))) } }
 )) { $c.N = T $c.N; [void]$PalCmds.Add([pscustomobject]$c) }
@@ -4447,10 +4733,20 @@ $ui.PalList.Add_MouseLeftButtonUp({ Run-Palette })
 $ui.Palette.Add_MouseLeftButtonDown({ param($s, $e) if ($e.OriginalSource -eq $ui.Palette) { Close-Palette } })
 
 # --- Scorciatoie da tastiera ---
+function Set-Zoom([double]$z, [switch]$Quiet) {
+    $z = [Math]::Round([Math]::Min(1.5, [Math]::Max(0.8, $z)), 1)
+    if ($win.Content -is [Windows.FrameworkElement]) { $win.Content.LayoutTransform = New-Object Windows.Media.ScaleTransform($z, $z) }
+    if ($Settings.Zoom -ne $z) { $Settings.Zoom = $z; Save-Settings }
+    if (-not $Quiet) { Toast "Zoom $([int]($z * 100)) %" }
+}
+if ($Settings.Zoom -and [double]$Settings.Zoom -ne 1) { Set-Zoom ([double]$Settings.Zoom) -Quiet }
 $win.Add_PreviewKeyDown({
     param($s, $e)
     $ctrl = [Windows.Input.Keyboard]::Modifiers -band [Windows.Input.ModifierKeys]::Control
     if ($ctrl -and $e.Key -eq 'K') { if ($ui.Palette.Visibility -eq 'Visible') { Close-Palette } else { Open-Palette }; $e.Handled = $true; return }
+    if ($ctrl -and $e.Key -in 'OemPlus', 'Add') { Set-Zoom ([double]$Settings.Zoom + 0.1); $e.Handled = $true; return }
+    if ($ctrl -and $e.Key -in 'OemMinus', 'Subtract') { Set-Zoom ([double]$Settings.Zoom - 0.1); $e.Handled = $true; return }
+    if ($ctrl -and $e.Key -in 'D0', 'NumPad0') { Set-Zoom 1.0; $e.Handled = $true; return }
     if ($ui.Palette.Visibility -eq 'Visible') { return }
     if (-not $ui.NavPanel.IsEnabled -and $sync.Phase -ne 'run') { return }
     if ($ctrl -and $e.Key -eq 'H' -and $sync.Phase -ne 'run') { Go-Home; $e.Handled = $true; return }
@@ -4511,11 +4807,14 @@ function Update-LastOps {
     if (Test-Path $p) {
         foreach ($l in Get-Content $p -Tail 3000 -Encoding UTF8) {
             try { $h = $l | ConvertFrom-Json } catch { continue }
-            $k = switch -Regex ($h.Area) { 'Aggiorna|Automatic' { 'upd' } 'Windows Update' { 'wu' } 'Pulizia' { 'clean' } 'Backup' { 'bk' } 'Manutenzione' { 'full' } default { $null } }
+            $a = [string]$h.Area
+            $k = if ($a -match 'Windows Update') { 'wu' } elseif ($a -match 'Manutenzione|Maintenance') { 'full' } elseif ($a -match 'Aggiorna|Automatic|Update') { 'upd' }
+                 elseif ($a -match 'Pulizia|Cleanup|Clean') { 'clean' } elseif ($a -match 'Backup') { 'bk' } else { $null }
             if ($k) { $last[$k] = [datetime]$h.Time }
         }
     }
     if ($Settings.LastBackup) { $last['bk'] = [datetime]$Settings.LastBackup }
+    $State.LastOps = $last
     $f = { param($k, $t) "$t " + $(if ($last[$k]) { $last[$k].ToString('dd/MM HH:mm') } else { 'mai' }) }
     $ui.HLast.Text = ((& $f 'full' 'Manutenzione:'), (& $f 'upd' 'Programmi aggiornati:'), (& $f 'wu' 'Windows Update:'), (& $f 'clean' 'Pulizia:'), (& $f 'bk' 'Backup:')) -join '   ·   '
 }
@@ -4529,6 +4828,10 @@ function Test-HealthAlarms($i) {
     foreach ($d in @($i.Disks)) { if ($d.Size -and $d.Free / $d.Size -lt 0.1) { $al += "Disco $($d.Name): solo $(Format-Size $d.Free) liberi" } }
     if ($i.Bat -and $null -ne $i.Bat.Health -and $i.Bat.Health -lt 50) { $al += "Batteria: capacità al $($i.Bat.Health)%" }
     if ($i.DefOk -eq $false) { $al += 'Antivirus Microsoft Defender disattivato' }
+    if ($State.LastOps) {
+        $lm = @($State.LastOps['full'], $State.LastOps['upd']) | Where-Object { $_ } | Sort-Object -Descending | Select-Object -First 1
+        if (-not $lm -or $lm -lt (Get-Date).AddDays(-30)) { $al += 'Manutenzione: non eseguita da oltre 30 giorni' }
+    }
     $key = ($al -join '|')
     if ($al.Count -and ($Settings.LastAlarm -ne "$((Get-Date).ToString('yyyyMMdd'))|$key")) {
         $Settings | Add-Member -NotePropertyName LastAlarm -NotePropertyValue "$((Get-Date).ToString('yyyyMMdd'))|$key" -Force; Save-Settings
@@ -4548,15 +4851,15 @@ function Export-Report([string]$Summary) {
         "<tr><td><b>$(& $E $it.Name)</b><div class='s'>$(& $E $it.Sub)</div></td><td>$(& $E $it.C1)</td><td>$(& $E $it.C2)</td><td><span class='p $($it.StatusKind)'>$(& $E $it.Status)</span></td></tr>"
     }
     $html = @"
-<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>MultiTool - $(& $E $M.Title)</title>
+<!DOCTYPE html><html lang="$(if ([MtTr]::On) { 'en' } else { 'it' })"><head><meta charset="utf-8"><title>MultiTool - $(& $E (T $M.Title))</title>
 <style>body{font-family:Segoe UI,sans-serif;background:#f4f5f9;color:#1b1e27;margin:40px}h1{margin:0;font-size:28px}
 .m{color:#5b6175;margin:6px 0 24px}table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px #0001}
 th,td{padding:12px 14px;text-align:left;border-bottom:1px solid #eceef4;font-size:14px;vertical-align:top}th{font-size:11px;color:#8a90a6;text-transform:uppercase}
 .s{color:#7a8096;font-size:12px;margin-top:2px}.p{padding:3px 10px;border-radius:8px;font-size:12px;font-weight:600;background:#eceef4}
 .ok{background:#d7f5ea;color:#047857}.err{background:#fde2e2;color:#b91c1c}.skip{color:#8a90a6}.run,.wait{background:#dce8ff;color:#1d4ed8}</style></head>
-<body><h1>$(& $E $M.Title)</h1><div class="m">$env:COMPUTERNAME  ·  $(Get-Date -Format 'dd/MM/yyyy HH:mm')  ·  $(& $E $Summary)</div>
-<table><tr><th>Elemento</th><th>Prima</th><th>Dopo</th><th>Esito</th></tr>$($rowsHtml -join '')</table>
-<p class="m" style="margin-top:20px">Generato da MultiTool $AppVersion</p></body></html>
+<body><h1>$(& $E (T $M.Title))</h1><div class="m">$env:COMPUTERNAME  ·  $(Get-Date -Format 'dd/MM/yyyy HH:mm')  ·  $(& $E (T $Summary))</div>
+<table><tr><th>$(T 'Elemento')</th><th>$(T 'Prima')</th><th>$(T 'Dopo')</th><th>$(T 'Esito')</th></tr>$($rowsHtml -join '')</table>
+<p class="m" style="margin-top:20px">$(T 'Generato da MultiTool') $AppVersion</p></body></html>
 "@
     Set-Content -Path $file -Value $html -Encoding UTF8
     $State.Report = $file
@@ -4644,6 +4947,12 @@ try {
 function Start-CountCheck { $sync.UpdCount = $null; Start-Bg $CountCode @{} }
 $bgTimer = New-Object Windows.Threading.DispatcherTimer
 $bgTimer.Interval = [TimeSpan]::FromHours(6)
+$sync.Online = $true
+$netTimer = New-Object Windows.Threading.DispatcherTimer
+$netTimer.Interval = [TimeSpan]::FromSeconds(60)
+$netTimer.Add_Tick({ Start-Bg '$sync.Online = Test-Online' @{} })
+$netTimer.Start()
+Start-Bg '$sync.Online = Test-Online' @{}
 $bgTimer.Add_Tick({ if ($sync.Phase -ne 'run') { Start-CountCheck; Start-UpdCheck; Refresh-Info } })
 $bgTimer.Start()
 
@@ -4684,7 +4993,8 @@ try {
 $navMap = @{ NavUpdates = 'updates'; NavInstall = 'installers'; NavCatalog = 'catalog'; NavProfiles = 'profiles'; NavUninstall = 'uninstall'
              NavWU = 'wu'; NavDrivers = 'drivers'; NavStartup = 'startup'; NavCleanup = 'cleanup'; NavRepair = 'repair'; NavHistory = 'history'
              NavFull = 'full'; NavPrivacy = 'privacy'; NavDeliver = 'deliver'; NavBackup = 'backup'; NavNetwork = 'network'
-             NavSecurity = 'security'; NavBench = 'bench'; NavRestore = 'restore' }
+             NavSecurity = 'security'; NavBench = 'bench'; NavRestore = 'restore'; NavServices = 'services'; NavProcesses = 'processes'
+             NavBigFiles = 'bigfiles'; NavEvents = 'events' }
 foreach ($n in $navMap.Keys) {
     $ui[$n].Add_Click({ param($s, $e) Open-Mode $navMap[$s.Name] })
 }
@@ -4735,6 +5045,7 @@ $ui.LX2.Add_Click({ & $Modes[$State.Mode].X2.Click })
 $ui.LAll.Add_Click({  foreach ($i in $ListView) { if ($i.Checkable -and $i.Editable) { $i.Selected = $true } } })
 $ui.LNone.Add_Click({ foreach ($i in $ListView) { if ($i.Checkable -and $i.Editable) { $i.Selected = $false } } })
 $ui.LCsv.Add_Click({ Export-ListCsv })
+$ui.HwBat.Add_Click({ New-BatteryReport })
 $ui.LGo.Add_Click({  Start-Action ([string]$Modes[$State.Mode].GoOp) })
 $ui.LGo2.Add_Click({ Start-Action ([string]$Modes[$State.Mode].Go2Op) })
 $ui.LCancel.Add_Click({
@@ -4755,6 +5066,7 @@ $ui.LSearchGo.Add_Click($doSearch)
 $ui.LSearch.Add_KeyDown({ param($s, $e) if ($e.Key -eq 'Return') { & $doSearch } })
 
 $ui.RebootGo.Add_Click({
+    if ($sync.Phase -eq 'run') { Toast 'Attendi la fine dell''operazione in corso prima di riavviare'; return }
     if ([MtTr]::Msg('Riavviare il computer adesso? Salva prima il lavoro aperto.', 'MultiTool', 'YesNo', 'Warning') -eq 'Yes') {
         Restart-Computer -Force
     }
@@ -4912,7 +5224,34 @@ $ui.SetEnglish.Add_Click({
     if ($sync.Phase -ne 'run') { Restart-App }
 })
 Update-BackupInfo
-$ui.SetLight.IsChecked = ($Settings.Theme -eq 'light')
+$ui.SetLight.IsChecked = ($EffTheme -eq 'light')
+$ui.SetAutoTheme.IsChecked = ($Settings.Theme -eq 'auto')
+$ui.SetLight.IsEnabled = ($Settings.Theme -ne 'auto')
+$ui.SetAutoTheme.Add_Click({
+    $Settings.Theme = if ($ui.SetAutoTheme.IsChecked) { 'auto' } elseif ($ui.SetLight.IsChecked) { 'light' } else { 'dark' }
+    $ui.SetLight.IsEnabled = -not $ui.SetAutoTheme.IsChecked
+    Save-Settings
+    if ($sync.Phase -ne 'run') { Restart-App } else { Toast 'Il tema verrà applicato al prossimo avvio' }
+})
+$StartTaskName = 'MultiTool - Avvio con Windows'
+function Update-StartupTask {
+    try {
+        if ($Settings.StartWithWindows) {
+            $vbs = Join-Path $DataDir 'avvio.vbs'
+            @('Set sh = CreateObject("WScript.Shell")', ('sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""' + $ScriptPath + '"" -Hidden", 0, False')) | Set-Content $vbs -Encoding ASCII
+            $act = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbs`""
+            $trg = New-ScheduledTaskTrigger -AtLogOn -User ([Security.Principal.WindowsIdentity]::GetCurrent().Name)
+            $trg.Delay = 'PT30S'
+            $pr  = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Highest
+            $st  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+            Register-ScheduledTask -TaskName $StartTaskName -Action $act -Trigger $trg -Principal $pr -Settings $st -Force | Out-Null
+            if (-not $Settings.Tray) { $Settings.Tray = $true; $ui.SetTray.IsChecked = $true; $Tray.Visible = $true; Save-Settings }
+        } else { Unregister-ScheduledTask -TaskName $StartTaskName -Confirm:$false -ErrorAction SilentlyContinue }
+    } catch { Toast "Avvio con Windows non impostato: $($_.Exception.Message)" }
+}
+$ui.SetStartup.IsChecked = [bool]$Settings.StartWithWindows
+$ui.SetStartup.Add_Click({ $Settings.StartWithWindows = [bool]$ui.SetStartup.IsChecked; Save-Settings; Update-StartupTask
+    Toast $(if ($Settings.StartWithWindows) { 'MultiTool partirà con Windows nell''area di notifica' } else { 'Avvio con Windows disattivato' }) })
 $ui.SetTray.IsChecked = [bool]$Settings.Tray
 $ui.SetPrefetch.IsChecked = [bool]$Settings.Prefetch
 $ui.SetAutoFull.IsChecked = [bool]$Settings.AutoFull
@@ -4931,7 +5270,11 @@ $ui.SetLight.Add_Click({
     Save-Settings
     if ($sync.Phase -ne 'run') { Restart-App } else { Toast 'Il tema verrà applicato al prossimo avvio' }
 })
-$ui.SetTray.Add_Click({ $Settings.Tray = [bool]$ui.SetTray.IsChecked; $Tray.Visible = $Settings.Tray; Save-Settings })
+$ui.SetTray.Add_Click({
+    $Settings.Tray = [bool]$ui.SetTray.IsChecked; $Tray.Visible = $Settings.Tray
+    if (-not $Settings.Tray -and $Settings.StartWithWindows) { $Settings.StartWithWindows = $false; $ui.SetStartup.IsChecked = $false; Update-StartupTask }
+    Save-Settings
+})
 $ui.SetUpdUrl.Add_LostFocus({ $Settings.UpdateUrl = $ui.SetUpdUrl.Text.Trim(); Save-Settings })
 $ui.SetUpdCheck.Add_Click({ $Settings.UpdateUrl = $ui.SetUpdUrl.Text.Trim(); Save-Settings; Start-UpdCheck })
 $ui.SetUpdGo.Add_Click({
@@ -4974,7 +5317,7 @@ $timer.Add_Tick({
   try {
     Clear-Jobs
     # Toast (coda)
-    if ($sync.Toast) { [void]$State.Q.Add((T $sync.Toast)); $sync.Toast = $null }
+    if ($sync.Toast) { Toast $sync.Toast; $sync.Toast = $null }
     if ((Get-Date) -gt $State.ToastUntil) {
         if ($State.Q.Count) {
             $ui.ToastText.Text = $State.Q[0]; $State.Q.RemoveAt(0)
@@ -4995,8 +5338,9 @@ $timer.Add_Tick({
         $n = $sync.UpdCount; $sync.UpdCount = $null
         if ($n -gt 0) {
             $ui.QUpdSub.Text = "$n aggiornamenti disponibili"
-            if ($Tray.Visible) { $Tray.ShowBalloonTip(6000, 'MultiTool', "$n aggiornamenti disponibili. Clicca per vederli.", 'Info') }
+            if ($Tray.Visible -and $n -gt [int]$State.LastUpdN) { $Tray.ShowBalloonTip(6000, 'MultiTool', (T "$n aggiornamenti disponibili. Clicca per vederli."), 'Info') }
         } elseif ($n -eq 0) { $ui.QUpdSub.Text = 'Tutto aggiornato' }
+        $State.LastUpdN = $n
     }
 
     # Auto-aggiornamento
@@ -5101,7 +5445,7 @@ $timer.Add_Tick({
                 }
                 $val = if ($se.U -in 'RPM', 'MHz') { '{0:N0}' -f $se.V } else { '{0:N1}' -f $se.V }
                 $vb = $t.FindName('v'); $vb.Text = "$val $($se.U)"
-                $vb.Foreground = if ($se.T -eq 'Temperature' -and $se.V -ge 85) { '#F87171' } elseif ($se.T -eq 'Temperature' -and $se.V -ge 70) { '#FBBF24' } elseif ($Settings.Theme -eq 'light') { '#1B1E27' } else { '#E8EAF2' }
+                $vb.Foreground = if ($se.T -eq 'Temperature' -and $se.V -ge 85) { '#F87171' } elseif ($se.T -eq 'Temperature' -and $se.V -ge 70) { '#FBBF24' } elseif ($EffTheme -eq 'light') { '#1B1E27' } else { '#E8EAF2' }
             }
         }
     }
