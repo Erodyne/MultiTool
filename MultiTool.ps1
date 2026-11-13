@@ -3,7 +3,7 @@
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.13.6'
+$AppVersion = '2026.11.13.7'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
@@ -525,7 +525,11 @@ function Invoke-CleanTarget($t) {
             $n = @(Get-SysShadows).Count
             for ($k = 1; $k -lt $n; $k++) { [void](Invoke-Hidden "$env:SystemRoot\System32\vssadmin.exe" "delete shadows /for=$env:SystemDrive /oldest /quiet" 120) }
         }
-        'recycle' { Clear-RecycleBin -Force -ErrorAction SilentlyContinue }
+        'recycle' {
+            $up = @(Get-UserRecyclePaths)
+            if ($up.Count) { foreach ($p in $up) { Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'desktop.ini' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } }
+            else { Clear-RecycleBin -Force -ErrorAction SilentlyContinue }
+        }
         'wu' {
             Stop-Service wuauserv, bits -Force -ErrorAction SilentlyContinue
             Remove-Items $t.Paths
@@ -554,8 +558,15 @@ function Get-TargetSize($t) {
         default { return Get-DirSize $t.Paths $t.Age }
     }
 }
+function Get-UserRecyclePaths {
+    $u = Get-UserCtx
+    if (-not $u.Other -or -not $u.Sid) { return @() }
+    @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction SilentlyContinue | ForEach-Object { "$($_.DeviceID)\`$Recycle.Bin\$($u.Sid)" } | Where-Object { Test-Path -LiteralPath $_ })
+}
 function Get-RecycleSize {
     $s = 0
+    $up = @(Get-UserRecyclePaths)
+    if ($up.Count) { foreach ($p in $up) { $s += (Get-ChildItem -LiteralPath $p -Recurse -Force -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'desktop.ini' } | Measure-Object Length -Sum).Sum }; return [double]$s }
     try { foreach ($i in (New-Object -ComObject Shell.Application).Namespace(10).Items()) { $s += [double]$i.ExtendedProperty('Size') } } catch {}
     $s
 }
@@ -2433,6 +2444,8 @@ Frequenza GPU ⇒ GPU clock
 Consumo GPU ⇒ GPU power
 Assistenza ⇒ Get Help
 capacità {0}% rispetto al nuovo ⇒ capacity {0}% of new
+Le attività pianificate vengono registrate per l'account amministratore {0}, non per {1}: partiranno solo quando {2} ha effettuato l'accesso al PC. ⇒ Scheduled tasks are registered for the administrator account {0}, not for {1}: they will only run while {2} is signed in to the PC.
+Stai usando l'account amministratore {0}: i file finiranno nel suo Cestino, non in quello di {1}. Per recuperarli dovrai accedere con {2}. Continuare? ⇒ You are using the administrator account {0}: files will go to its Recycle Bin, not to {1}'s. To recover them you will need to sign in as {2}. Continue?
 '@
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml
 if (-not ('MtTr' -as [type])) {
@@ -4883,7 +4896,8 @@ foreach ($g in $sys | Group-Object ProviderName, Id | Sort-Object Count -Descend
 }
 try {
     foreach ($e in Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-MemoryDiagnostics-Results'; StartTime = (Get-Date).AddDays(-60) } -MaxEvents 5 -ErrorAction Stop) {
-        $okm = $e.Id -eq 1201
+        if ($e.Id -notin 1101, 1102, 1201, 1202) { continue }
+        $okm = $e.Id -in 1101, 1201
         $rows.Add((New-Row @{ Name = 'Test della memoria RAM'; Sub = $(if ($okm) { 'Nessun errore rilevato' } else { 'Rilevati errori: la RAM potrebbe essere difettosa' }); C1 = 'esito'
             C2 = $e.TimeCreated.ToString('dd/MM HH:mm'); Tag = $(if ($okm) { 'ok' } else { 'RAM difettosa' }); TagKind = $(if ($okm) { 'ok' } else { 'err' }); Checkable = $false; Glyph = [string][char]0xE964 })) | Out-Null
     }
@@ -5212,6 +5226,7 @@ $Modes = @{
     bigfiles = @{ Nav = 'NavBigFiles'; Title = 'File grandi'; Glyph = (G 0xE8B7); AfterDone = 'review'
         Sub = 'Ricerca dei file più grandi…'; H = 'DIMENSIONE', 'MODIFICATO', '', 'ESITO'; Scan = $ScanBigFiles; Action = $ActBigFiles; Go = 'SPOSTA NEL CESTINO'
         Confirm = 'Spostare {0} file nel Cestino? Potrai recuperarli finché non svuoti il Cestino.'
+        PreCheck = { param($op, $sel) if ((Get-UserCtx).Other) { [MtTr]::Msg("Stai usando l'account amministratore $env:USERNAME: i file finiranno nel suo Cestino, non in quello di $((Get-UserCtx).Name). Per recuperarli dovrai accedere con $env:USERNAME. Continuare?", 'MultiTool', 'YesNo', 'Warning') -eq 'Yes' } else { $true } }
         X1 = @{ Text = 'Apri percorso'; Click = { $s = @($Items | Where-Object Selected | Select-Object -First 1); if ($s) { Start-Process explorer.exe "/select,`"$($s[0].Key)`"" } else { Toast 'Seleziona prima un file' } } }
         X2 = @{ Text = 'Cerca in tutto il disco'; Click = { $State.Vars = @{ all = $true }; Start-Scan } }
         Empty = @{ Glyph = (G 0xE8B7); Title = 'Nessun file oltre 100 MB'; Text = '' } }
@@ -5779,17 +5794,17 @@ foreach ($n in @($ui.NavPanel.Children)) {
     }
 }
 foreach ($c in @(
-    @{ N = 'Storico sensori'; A = { Export-SensorHistory } }
-    @{ N = 'Esporta inventario hardware'; A = { Open-Hw; Export-Hw } }
+    @{ Safe = $true; N = 'Storico sensori'; A = { Export-SensorHistory } }
+    @{ Safe = $true; N = 'Esporta inventario hardware'; A = { Open-Hw; Export-Hw } }
     @{ N = 'Backup driver'; A = { Start-DriverBackup } }
     @{ N = 'Esporta configurazione di MultiTool'; A = { Export-Config } }
     @{ N = 'Importa configurazione di MultiTool'; A = { Import-Config } }
     @{ N = 'Controlla aggiornamenti di MultiTool'; A = { Start-UpdCheck; Show-View 'ViewSettings' } }
-    @{ N = 'Informazioni e note legali'; A = { Show-About $false } }
-    @{ N = 'Novità di questa versione'; A = { Open-Shell "$AppRepo/releases/tag/v$AppVersion" } }
-    @{ N = 'Apri cartella dati'; A = { Start-Process explorer.exe $DataDir } }
-    @{ N = 'Gestione dispositivi'; A = { Start-Process devmgmt.msc } }
-    @{ N = 'Rapporto batteria'; A = { New-BatteryReport } }
+    @{ Safe = $true; N = 'Informazioni e note legali'; A = { Show-About $false } }
+    @{ Safe = $true; N = 'Novità di questa versione'; A = { Open-Shell "$AppRepo/releases/tag/v$AppVersion" } }
+    @{ Safe = $true; N = 'Apri cartella dati'; A = { Start-Process explorer.exe $DataDir } }
+    @{ Safe = $true; N = 'Gestione dispositivi'; A = { Start-Process devmgmt.msc } }
+    @{ Safe = $true; N = 'Rapporto batteria'; A = { New-BatteryReport } }
     @{ N = 'Rapporto sullo stato del PC'; A = { New-HealthReportUi } }
     @{ N = 'Scheda intervento'; A = { New-JobSheetUi } }
     @{ N = 'Etichetta QR del PC'; A = { Toast 'Creo l''etichetta…'; Start-Bg '$f = New-PcLabel; Open-Shell $f' @{} } }
@@ -5803,17 +5818,17 @@ foreach ($c in @(
     @{ N = 'Piano energetico: prestazioni elevate'; A = { Set-PowerPlan '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c' 'prestazioni elevate' } }
     @{ N = 'Piano energetico: bilanciato'; A = { Set-PowerPlan '381b4222-f694-41f0-9685-ff5bb260df2e' 'bilanciato' } }
     @{ N = 'Piano energetico: risparmio energia'; A = { Set-PowerPlan 'a1841308-3541-4fab-bc81-f71556f20b4a' 'risparmio energia' } }
-    @{ N = 'Gestione disco'; A = { Start-Process diskmgmt.msc } }
-    @{ N = 'Visualizzatore eventi'; A = { Start-Process eventvwr.msc } }
-    @{ N = 'Servizi di Windows'; A = { Start-Process services.msc } }
-    @{ N = 'Monitoraggio risorse'; A = { Start-Process resmon.exe } }
+    @{ Safe = $true; N = 'Gestione disco'; A = { Start-Process diskmgmt.msc } }
+    @{ Safe = $true; N = 'Visualizzatore eventi'; A = { Start-Process eventvwr.msc } }
+    @{ Safe = $true; N = 'Servizi di Windows'; A = { Start-Process services.msc } }
+    @{ Safe = $true; N = 'Monitoraggio risorse'; A = { Start-Process resmon.exe } }
     @{ N = 'Configurazione di sistema'; A = { Start-Process msconfig.exe } }
-    @{ N = 'Pannello di controllo'; A = { Start-Process control.exe } }
+    @{ Safe = $true; N = 'Pannello di controllo'; A = { Start-Process control.exe } }
     @{ N = 'Pulizia disco di Windows'; A = { Start-Process cleanmgr.exe } }
-    @{ N = 'Utilità di pianificazione'; A = { Start-Process taskschd.msc } }
-    @{ N = 'Gestione attività'; A = { Start-Process taskmgr.exe } }
-    @{ N = 'Monitoraggio affidabilità'; A = { Start-Process perfmon.exe '/rel' } }
-    @{ N = 'Sicurezza di Windows'; A = { Start-Process 'windowsdefender:' } }
+    @{ Safe = $true; N = 'Utilità di pianificazione'; A = { Start-Process taskschd.msc } }
+    @{ Safe = $true; N = 'Gestione attività'; A = { Start-Process taskmgr.exe } }
+    @{ Safe = $true; N = 'Monitoraggio affidabilità'; A = { Start-Process perfmon.exe '/rel' } }
+    @{ Safe = $true; N = 'Sicurezza di Windows'; A = { Start-Process 'windowsdefender:' } }
     @{ N = 'Riavvia il PC'; A = { $ui.RebootGo.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent))) } }
 )) { $c.N = T $c.N; [void]$PalCmds.Add([pscustomobject]$c) }
 function Update-Palette {
@@ -5824,7 +5839,7 @@ function Update-Palette {
 }
 function Open-Palette { $ui.PalText.Text = ''; Update-Palette; $ui.Palette.Visibility = 'Visible'; [void]$ui.PalText.Focus() }
 function Close-Palette { $ui.Palette.Visibility = 'Collapsed' }
-function Run-Palette { $c = $ui.PalList.SelectedItem; Close-Palette; if ($c) { if ($sync.Phase -eq 'run' -and $c.N -notmatch 'Storico|Esporta|Informazioni|cartella') { Toast 'Attendi la fine dell''operazione in corso'; return }; & $c.A } }
+function Run-Palette { $c = $ui.PalList.SelectedItem; Close-Palette; if ($c) { if ($sync.Phase -eq 'run' -and -not $c.Safe) { Toast 'Attendi la fine dell''operazione in corso'; return }; & $c.A } }
 $ui.PalText.Add_TextChanged({ Update-Palette })
 $ui.PalText.Add_PreviewKeyDown({
     param($s, $e)
@@ -5867,7 +5882,7 @@ $win.Add_PreviewKeyDown({
         elseif ($ui.ViewLogs.Visibility -eq 'Visible') { Load-Logs }
         $e.Handled = $true; return
     }
-    if ($e.Key -eq 'Escape' -and $ui.ViewList.Visibility -eq 'Visible' -and -not ($e.OriginalSource -is [Windows.Controls.TextBox] -and $e.OriginalSource.Text)) {
+    if ($e.Key -eq 'Escape' -and $sync.Phase -ne 'run' -and $ui.ViewList.Visibility -eq 'Visible' -and -not ($e.OriginalSource -is [Windows.Controls.TextBox] -and $e.OriginalSource.Text)) {
         $ui.LCancel.RaiseEvent((New-Object Windows.RoutedEventArgs ([Windows.Controls.Primitives.ButtonBase]::ClickEvent))); $e.Handled = $true
     }
 })
@@ -6257,7 +6272,7 @@ function Update-AutoInfo {
     $t = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     $ui.SetAutoInfo.Text = if ($t) {
         $nx = (Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue).NextRunTime
-        if ($nx) { "Prossima esecuzione: $($nx.ToString('ddd dd/MM HH:mm'))" } else { 'Attività pianificata attiva' }
+        if ($nx) { "Prossima esecuzione: $($nx.ToString('ddd dd/MM HH:mm', [Globalization.CultureInfo]::GetCultureInfo($(if ($Settings.Lang -eq 'en') { 'en-GB' } else { 'it-IT' }))))" } else { 'Attività pianificata attiva' }
     } else { 'Non pianificato' }
 }
 
@@ -6289,7 +6304,7 @@ $ui.SetSave.Add_Click({
     try {
         if ($Settings.AutoEnabled) {
             Register-AutoTask $day $time
-            Toast 'Aggiornamento automatico pianificato'
+            Toast 'Aggiornamento automatico pianificato'; Show-TaskAccountNote
         } else {
             Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
             Unregister-ScheduledTask -TaskName "$TaskName (recupero)" -Confirm:$false -ErrorAction SilentlyContinue
@@ -6346,7 +6361,7 @@ $ui.SetBkSave.Add_Click({
     if ($t -notmatch '^([01]?\d|2[0-3]):[0-5]\d$') { Toast 'Orario non valido: usa il formato HH:MM'; return }
     if ($ui.SetBkAuto.IsChecked -and -not $Settings.BackupDest) { Toast 'Scegli prima la destinazione nella sezione Backup'; $ui.SetBkAuto.IsChecked = $false; return }
     $Settings.BackupAuto = [bool]$ui.SetBkAuto.IsChecked; $Settings.BackupTime = $t; Save-Settings
-    Update-BackupTask; Toast $(if ($Settings.BackupAuto) { "Backup automatico ogni giorno alle $t" } else { 'Backup automatico disattivato' })
+    Update-BackupTask; if ($Settings.BackupAuto) { Show-TaskAccountNote }; Toast $(if ($Settings.BackupAuto) { "Backup automatico ogni giorno alle $t" } else { 'Backup automatico disattivato' })
 })
 $ui.SetSensLog.IsChecked = [bool]$Settings.SensLog
 $ui.SetSensLog.Add_Click({
@@ -6394,6 +6409,10 @@ function Update-StartupTask {
         } else { Unregister-ScheduledTask -TaskName $StartTaskName -Confirm:$false -ErrorAction SilentlyContinue }
     } catch { Toast "Avvio con Windows non impostato: $($_.Exception.Message)" }
 }
+function Show-TaskAccountNote {
+    $u = Get-UserCtx
+    if ($u.Other) { [void][MtTr]::Msg("Le attività pianificate vengono registrate per l'account amministratore $env:USERNAME, non per $($u.Name): partiranno solo quando $env:USERNAME ha effettuato l'accesso al PC.", 'MultiTool', 'OK', 'Information') }
+}
 function Repair-Tasks {
     foreach ($d in @(@{ T = $TaskName; F = 'auto.vbs'; A = '-Auto'; W = 'True' }, @{ T = "$TaskName (recupero)"; F = 'auto-logon.vbs'; A = '-Auto -Logon'; W = 'True' }, @{ T = $BkTaskName; F = 'backup.vbs'; A = '-Backup'; W = 'True' }, @{ T = $StartTaskName; F = 'avvio.vbs'; A = '-Hidden'; W = 'False' })) {
         $t = Get-ScheduledTask -TaskName $d.T -ErrorAction SilentlyContinue
@@ -6409,7 +6428,7 @@ function Repair-Tasks {
     }
 }
 $ui.SetStartup.IsChecked = [bool]$Settings.StartWithWindows
-$ui.SetStartup.Add_Click({ $Settings.StartWithWindows = [bool]$ui.SetStartup.IsChecked; Save-Settings; Update-StartupTask
+$ui.SetStartup.Add_Click({ $Settings.StartWithWindows = [bool]$ui.SetStartup.IsChecked; Save-Settings; Update-StartupTask; if ($Settings.StartWithWindows) { Show-TaskAccountNote }
     Toast $(if ($Settings.StartWithWindows) { 'MultiTool partirà con Windows nell''area di notifica' } else { 'Avvio con Windows disattivato' }) })
 $ui.SetTray.IsChecked = [bool]$Settings.Tray
 $ui.SetPrefetch.IsChecked = [bool]$Settings.Prefetch
@@ -6840,7 +6859,7 @@ try {
     $me = Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-MemoryDiagnostics-Results' } -MaxEvents 1 -ErrorAction Stop
     if ($me -and $me.TimeCreated.ToString('s') -ne [string]$Settings.LastMemCheck) {
         $Settings | Add-Member -NotePropertyName LastMemCheck -NotePropertyValue $me.TimeCreated.ToString('s') -Force; Save-Settings
-        if ($me.TimeCreated -gt (Get-Date).AddDays(-2)) { Toast $(if ($me.Id -eq 1201) { 'Test della memoria: nessun errore' } else { 'Test della memoria: rilevati ERRORI nella RAM' }) }
+        if ($me.TimeCreated -gt (Get-Date).AddDays(-2)) { Toast $(if ($me.Id -in 1101, 1201) { 'Test della memoria: nessun errore' } else { 'Test della memoria: rilevati ERRORI nella RAM' }) }
     }
 } catch {}
 if (-not (Test-Metered)) { Start-CountCheck; Start-UpdCheck } else { $ui.SetUpdInfo.Text = "Versione installata: $AppVersion  ·  connessione a consumo: controllo rimandato" }
