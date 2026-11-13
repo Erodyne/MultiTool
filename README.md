@@ -43,6 +43,16 @@ Requisiti: Windows 10 o 11 a 64 bit, diritti di amministratore. Per gli aggiorna
 | `Esc` | Annulla / torna alla Home |
 | `Ctrl+H` | Home |
 
+## Riga di comando
+
+```
+MultiTool.exe -Aggiorna        # aggiorna tutti i programmi
+MultiTool.exe -Manutenzione    # aggiornamenti, Windows Update, pulizia e controllo driver
+MultiTool.exe -Pulizia         # pulizia disco con le voci predefinite
+```
+
+Le operazioni girano senza finestra; l'esito arriva come notifica e finisce nella Cronologia.
+
 ## Struttura del repository
 
 ```
@@ -79,6 +89,8 @@ MultiTool usa strumenti e servizi di terze parti, mai inclusi nel pacchetto ma s
 - [Cloudflare Speed Test](https://speed.cloudflare.com) e [ipify](https://www.ipify.org) per la sezione Rete
 - [qrcodejs](https://github.com/davidshimjs/qrcodejs) e [Chart.js](https://www.chartjs.org) nei rapporti HTML
 - Installer creato con [NSIS](https://nsis.sourceforge.io)
+
+Grafici e codici QR usano [Chart.js](https://www.chartjs.org) e [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) (licenza MIT), inclusi in `Strumenti/` per funzionare anche senza internet.
 
 ## Note legali
 

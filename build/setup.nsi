@@ -94,6 +94,9 @@ Section "MultiTool (obbligatorio)" SecMain
   File "${SRC}\Avvia.vbs"
   SetOutPath "$INSTDIR\Strumenti"
   File "${SRC}\Strumenti\Firma-MultiTool.ps1"
+  File "${SRC}\Strumenti\qrcode.js"
+  File "${SRC}\Strumenti\chart.umd.min.js"
+  File "${SRC}\Strumenti\LICENZE.txt"
 
   ; dati condivisi in ProgramData (non sovrascrive profili modificati)
   CreateDirectory "$APPDATA\MultiTool\Installers"

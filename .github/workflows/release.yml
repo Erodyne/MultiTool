@@ -77,6 +77,12 @@ jobs:
           Copy-Item Profili, Strumenti, Installers -Destination $tmp -Recurse
           Compress-Archive -Path $tmp -DestinationPath "dist\MultiTool-portatile-${{ steps.v.outputs.version }}.zip"
 
+      - name: Impronta SHA256 dello script
+        shell: pwsh
+        run: |
+          $h = (Get-FileHash MultiTool.ps1 -Algorithm SHA256).Hash
+          "$h  MultiTool.ps1" | Set-Content -NoNewline -Encoding ascii dist\MultiTool.ps1.sha256
+
       - uses: actions/upload-artifact@v4
         with:
           name: MultiTool-${{ steps.v.outputs.version }}
