@@ -1,13 +1,13 @@
-﻿param([switch]$Auto, [switch]$Backup, [switch]$Uninstall, [switch]$Hidden)
+﻿param([switch]$Auto, [switch]$Backup, [switch]$Uninstall, [switch]$Hidden, [switch]$Restart)
 # ============================================================
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.13.2'
+$AppVersion = '2026.11.13.3'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
-$DefaultUpdateUrl = ''
+$DefaultUpdateUrl = 'https://raw.githubusercontent.com/Erodyne/MultiTool/main'
 $ScriptPath = $PSCommandPath
 $Root    = Split-Path -Parent $ScriptPath
 $Installed = $Root -like "$env:ProgramFiles*"
@@ -44,7 +44,7 @@ function Get-WingetPath {
     throw 'winget non trovato. Installa "Programma di installazione app" dal Microsoft Store.'
 }
 
-function Invoke-Hidden([string]$File, [string]$Arguments) {
+function Invoke-Hidden([string]$File, [string]$Arguments, [int]$TimeoutSec = 0) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $File; $psi.Arguments = $Arguments
     $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
@@ -52,9 +52,13 @@ function Invoke-Hidden([string]$File, [string]$Arguments) {
     $psi.StandardOutputEncoding = [Text.Encoding]::UTF8; $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
     $p = [Diagnostics.Process]::Start($psi)
     $e = $p.StandardError.ReadToEndAsync()
-    $o = $p.StandardOutput.ReadToEnd()
+    $o = $p.StandardOutput.ReadToEndAsync()
+    if ($TimeoutSec -gt 0 -and -not $p.WaitForExit($TimeoutSec * 1000)) {
+        try { [void](Start-Process taskkill.exe "/PID $($p.Id) /T /F" -WindowStyle Hidden -Wait -PassThru) } catch {}
+        throw "$([IO.Path]::GetFileName($File)) non ha risposto entro $TimeoutSec secondi"
+    }
     $p.WaitForExit()
-    [pscustomobject]@{ Code = $p.ExitCode; Out = $o; Err = $e.Result }
+    [pscustomobject]@{ Code = $p.ExitCode; Out = $o.Result; Err = $e.Result }
 }
 
 function Invoke-Live([string]$File, [string]$Arguments, [Text.Encoding]$Enc, [scriptblock]$OnLine) {
@@ -139,6 +143,21 @@ function Get-WingetResult([int]$Code, [string]$OkText) {
         '0x8A150061' { return 'ok', 'Già installato' }
         '0x8A150109' { $sync.Reboot = $true; return 'ok', 'Riavvio richiesto' }
         '0x8A150014' { return 'err', 'Non trovato' }
+        '0x8A15010D' { return 'ok', 'Già installato' }
+        '0x8A15010A' { $sync.Reboot = $true; return 'err', 'Serve prima un riavvio' }
+        '0x8A15010B' { $sync.Reboot = $true; return 'ok', 'Riavvio richiesto' }
+        { $_ -in '0x8A150101', '0x8A150111' } { return 'err', 'Programma aperto: chiudilo e riprova' }
+        '0x8A150102' { return 'err', 'Un''altra installazione è in corso' }
+        '0x8A150103' { return 'err', 'File in uso: chiudi il programma e riprova' }
+        '0x8A150104' { return 'err', 'Manca un componente richiesto' }
+        '0x8A150105' { return 'err', 'Disco pieno' }
+        '0x8A150106' { return 'err', 'Memoria insufficiente' }
+        '0x8A150107' { return 'err', 'Connessione a internet assente' }
+        '0x8A15010C' { return 'skip', 'Annullato dall''utente' }
+        '0x8A15010E' { return 'ok', 'Già presente una versione più recente' }
+        '0x8A15010F' { return 'err', 'Bloccato dai criteri aziendali' }
+        '0x8A150011' { return 'err', 'File scaricato non valido (hash diverso)' }
+        '0x8A150010' { return 'err', 'Nessun installer adatto a questo PC' }
     }
     if ($Code -in 3010, 1641) { $sync.Reboot = $true; return 'ok', 'Riavvio richiesto' }
     return 'err', "Errore $hex"
@@ -184,11 +203,16 @@ function Format-Size([double]$b) {
 
 function Read-Json([string]$Name, $Default) {
     $p = Join-Path $DataDir $Name
-    if (Test-Path $p) { try { return (Get-Content $p -Raw -Encoding UTF8 | ConvertFrom-Json) } catch {} }
+    foreach ($f in $p, "$p.bak") {
+        if (Test-Path $f) { try { $j = Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop; if ($null -ne $j) { return $j } } catch {} }
+    }
     $Default
 }
 function Save-Json([string]$Name, $Obj) {
-    ConvertTo-Json -InputObject $Obj -Depth 5 | Set-Content (Join-Path $DataDir $Name) -Encoding UTF8
+    $p = Join-Path $DataDir $Name; $tmp = "$p.tmp"
+    ConvertTo-Json -InputObject $Obj -Depth 5 | Set-Content $tmp -Encoding UTF8 -ErrorAction Stop
+    if (Test-Path $p) { Copy-Item $p "$p.bak" -Force -ErrorAction SilentlyContinue }
+    Move-Item $tmp $p -Force
 }
 function Read-Exclusions { @(@(Read-Json 'exclusions.json' @()) | Where-Object { $_ }) }
 
@@ -235,6 +259,12 @@ function Test-Online {
     try { [void][Net.Dns]::GetHostAddresses('github.com'); return $true } catch { return $false }
 }
 
+function Get-SecProducts([string]$Class) {
+    try {
+        @(Get-CimInstance -Namespace root\SecurityCenter2 -ClassName $Class -ErrorAction Stop |
+          Where-Object { $_.displayName -notmatch 'Windows Defender|Microsoft Defender|Windows Firewall' -and (([int64]$_.productState -band 0xF000) -eq 0x1000) })
+    } catch { @() }
+}
 function Test-PendingReboot {
     (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -or
     (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')
@@ -260,6 +290,7 @@ function Split-CommandLine([string]$c) {
     $c = $c.Trim()
     if ($c.StartsWith('"')) {
         $e = $c.IndexOf('"', 1)
+        if ($e -lt 0) { return $c.Trim('"'), '' }
         return $c.Substring(1, $e - 1), $c.Substring($e + 1).Trim()
     }
     $m = [regex]::Match($c, '^(.+?\.exe)\s*(.*)$', 'IgnoreCase')
@@ -271,6 +302,7 @@ function Install-Local([string]$Path, [bool]$Silent) {
     $dir = Split-Path $Path
     $ext = [IO.Path]::GetExtension($Path).ToLower()
     $af  = "$Path.args"
+    try { Unblock-File -Path $Path -ErrorAction SilentlyContinue } catch {}
     $ua  = if (Test-Path $af) { (Get-Content $af -Raw).Trim() } else { $null }
     switch -Regex ($ext) {
         '^\.msi$' {
@@ -300,7 +332,8 @@ function Install-WU($items, [string]$Type) {
         $c = New-Object -ComObject Microsoft.Update.UpdateColl
         [void]$c.Add($u)
         Set-It $it 'run' 'Download…'
-        $d = $s.CreateUpdateDownloader(); $d.Updates = $c; [void]$d.Download()
+        $d = $s.CreateUpdateDownloader(); $d.Updates = $c; $dr = $d.Download()
+        if ($dr.ResultCode -notin 2, 3) { Set-It $it 'err' 'Download non riuscito'; return }
         Set-It $it 'run' 'Installazione…'
         $in = $s.CreateUpdateInstaller(); $in.Updates = $c; $r = $in.Install()
         if ($r.RebootRequired) { $sync.Reboot = $true }
@@ -365,6 +398,8 @@ function Get-CleanTargets {
         @{ Id = 'edge';    Name = 'Cache di Microsoft Edge';     Def = $false; Desc = 'Chiudi Edge prima di pulire  ·  password e cronologia non vengono toccate'; Paths = @("$env:LOCALAPPDATA\Microsoft\Edge\User Data\*\Cache\Cache_Data", "$env:LOCALAPPDATA\Microsoft\Edge\User Data\*\Code Cache") }
         @{ Id = 'chrome';  Name = 'Cache di Google Chrome';      Def = $false; Desc = 'Chiudi Chrome prima di pulire  ·  password e cronologia non vengono toccate'; Paths = @("$env:LOCALAPPDATA\Google\Chrome\User Data\*\Cache\Cache_Data", "$env:LOCALAPPDATA\Google\Chrome\User Data\*\Code Cache") }
         @{ Id = 'firefox'; Name = 'Cache di Mozilla Firefox';    Def = $false; Desc = 'Chiudi Firefox prima di pulire  ·  password e cronologia non vengono toccate'; Paths = @("$env:LOCALAPPDATA\Mozilla\Firefox\Profiles\*\cache2") }
+        @{ Id = 'shader';  Name = 'Cache degli shader (DirectX, NVIDIA, AMD)'; Def = $false; Desc = 'Verrà ricreata dai giochi al primo avvio'; Paths = @("$env:LOCALAPPDATA\D3DSCache", "$env:LOCALAPPDATA\NVIDIA\DXCache", "$env:LOCALAPPDATA\NVIDIA\GLCache", "$env:LOCALAPPDATA\AMD\DxCache", "$env:LOCALAPPDATA\AMD\DxcCache") }
+        @{ Id = 'winlogs'; Name = 'Log di Windows vecchi';        Def = $true;  Age = 336; Desc = 'Log di installazione e diagnostica più vecchi di 14 giorni'; Paths = @("$env:SystemRoot\Logs\CBS", "$env:SystemRoot\Logs\DISM", "$env:SystemRoot\Logs\MoSetup") }
         @{ Id = 'thumb';   Name = 'Cache miniature';              Def = $false; Desc = 'Verrà ricreata automaticamente'; Paths = @("$env:LOCALAPPDATA\Microsoft\Windows\Explorer\thumbcache_*.db") }
         @{ Id = 'recycle'; Name = 'Cestino';                      Def = $false; Desc = 'Svuota definitivamente il cestino'; Paths = @() }
     )
@@ -517,7 +552,7 @@ function Get-HwInventory {
     Add-Card 'Memoria RAM' 0xE964 $rows
 
     $sync.HwStatus = 'Scheda video…'
-    $cls = 'HKLM:\SYSTEM\ControlSet001\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}'
+    $cls = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}'
     foreach ($g in Get-CimInstance Win32_VideoController) {
         $vram = $null
         foreach ($k in Get-ChildItem $cls -ErrorAction SilentlyContinue) {
@@ -586,7 +621,7 @@ function Invoke-MaintStep($it) {
             $excl = Read-Exclusions
             $it.Sub = 'Cerco aggiornamenti…'
             Start-StoreScan
-            $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity'
+            $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity' 300
             $list = @(ConvertFrom-WingetTable $r.Out | Where-Object { $_.Cols.Count -ge 4 -and $excl -notcontains $_.Cols[1] -and $_.Cols[1] -notmatch '…$' })
             $ok = 0; $err = 0; $i = 0
             foreach ($t in $list) {
@@ -607,13 +642,14 @@ function Invoke-MaintStep($it) {
             $sr = $s.CreateUpdateSearcher(); $sr.ServerSelection = 2; $sr.Online = $true
             $c = New-Object -ComObject Microsoft.Update.UpdateColl
             foreach ($u in $sr.Search("IsInstalled=0 and IsHidden=0 and Type='Software'").Updates) {
-                if ($u.BrowseOnly) { continue }
+                if ($u.BrowseOnly -or @($u.Categories | Where-Object { $_.Name -eq 'Upgrades' }).Count) { continue }
                 if (-not $u.EulaAccepted) { $u.AcceptEula() }
                 [void]$c.Add($u)
             }
             if ($c.Count -eq 0) { $it.Sub = 'Windows è aggiornato'; Set-It $it 'ok' 'Nessuno'; return }
             $it.Sub = "Scarico $($c.Count) aggiornamenti…"
-            $d = $s.CreateUpdateDownloader(); $d.Updates = $c; [void]$d.Download()
+            $d = $s.CreateUpdateDownloader(); $d.Updates = $c; $dr = $d.Download()
+            if ($dr.ResultCode -notin 2, 3) { $it.Sub = 'Download degli aggiornamenti non riuscito'; Set-It $it 'err' 'Download non riuscito'; return }
             $it.Sub = "Installo $($c.Count) aggiornamenti…"
             $in = $s.CreateUpdateInstaller(); $in.Updates = $c; $r = $in.Install()
             $ok = 0; for ($i = 0; $i -lt $c.Count; $i++) { if ($r.GetUpdateResult($i).ResultCode -in 2, 3) { $ok++ } }
@@ -692,7 +728,7 @@ function New-DeliveryReport {
     $S = Get-Settings; $E = { param($t) [Net.WebUtility]::HtmlEncode([string]$t) }
     $id = Get-PcIdentity
     $cards = Get-HwInventory
-    $keys = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    $keys = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
     $apps = Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -and $_.SystemComponent -ne 1 -and -not $_.ParentKeyName } |
             Sort-Object DisplayName -Unique | ForEach-Object { "<tr><td>$(& $E $_.DisplayName)</td><td>$(& $E $_.DisplayVersion)</td><td>$(& $E $_.Publisher)</td></tr>" }
     $hw = foreach ($c in $cards) { "<h3>$(& $E $c.T)</h3><table>" + (($c.Rows | ForEach-Object { "<tr><th>$(& $E $_.L)</th><td>$(& $E $_.V)</td></tr>" }) -join '') + '</table>' }
@@ -753,11 +789,33 @@ function Get-BackupFolders {
         @{ Id = 'vid'; Name = 'Video'; Path = [Environment]::GetFolderPath('MyVideos'); Def = $false }
         @{ Id = 'mus'; Name = 'Musica'; Path = [Environment]::GetFolderPath('MyMusic'); Def = $false }
         @{ Id = 'dl'; Name = 'Download'; Path = $dl; Def = $false }
+        @{ Id = 'fav'; Name = 'Preferiti dei browser'; Path = $env:LOCALAPPDATA; Def = $true
+           Multi = @(@{ N = 'Edge'; P = "$env:LOCALAPPDATA\Microsoft\Edge\User Data"; F = @('Bookmarks') }
+                     @{ N = 'Chrome'; P = "$env:LOCALAPPDATA\Google\Chrome\User Data"; F = @('Bookmarks') }
+                     @{ N = 'Firefox'; P = "$env:APPDATA\Mozilla\Firefox\Profiles"; F = @('places.sqlite', 'favicons.sqlite') }) }
     )
 }
-function Invoke-FolderBackup([string]$Src, [string]$Dest) {
+function Get-BackupEntrySize($f) {
+    if (-not $f.Multi) { return Get-DirSize @($f.Path) }
+    $s = 0
+    foreach ($m in $f.Multi) { if (Test-Path $m.P) { $s += (Get-ChildItem $m.P -Recurse -File -Include $m.F -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum } }
+    [double]$s
+}
+function Invoke-BackupEntry($f, [string]$Root) {
+    $dest = Join-Path $Root $f.Name
+    if (-not $f.Multi) { return Invoke-FolderBackup $f.Path $dest }
+    $code = 0; $n = 0
+    foreach ($m in $f.Multi) {
+        if (-not (Test-Path $m.P)) { continue }
+        $r = Invoke-FolderBackup $m.P (Join-Path $dest $m.N) $m.F
+        if ($r.Code -gt $code) { $code = $r.Code }; if ($r.Copied -gt 0) { $n += $r.Copied }
+    }
+    [pscustomobject]@{ Code = $code; Copied = $n }
+}
+function Invoke-FolderBackup([string]$Src, [string]$Dest, [string[]]$Files) {
     New-Item -ItemType Directory -Path $Dest -Force | Out-Null
-    $a = "`"$Src`" `"$Dest`" /E /XO /R:1 /W:1 /MT:8 /NP /NFL /NDL /XJ /XA:SO"
+    $a = if ($Files) { "`"$Src`" `"$Dest`" " + (($Files | ForEach-Object { "`"$_`"" }) -join ' ') + " /S /XO /R:1 /W:1 /NP /NFL /NDL /XJ /XA:SO" }
+         else { "`"$Src`" `"$Dest`" /E /XO /R:1 /W:1 /MT:8 /NP /NFL /NDL /XJ /XA:SO" }
     $r = Invoke-Hidden "$env:SystemRoot\System32\robocopy.exe" $a
     $m = [regex]::Match($r.Out, '(?m)^\s*(File|Files)\s*:\s*(\d+)\s+(\d+)')
     [pscustomobject]@{ Code = $r.Code; Copied = $(if ($m.Success) { [int]$m.Groups[3].Value } else { -1 }) }
@@ -768,7 +826,7 @@ function Test-Ping([string]$HostName) {
     try { $p = New-Object Net.NetworkInformation.Ping; $t = @(1..3 | ForEach-Object { $r = $p.Send($HostName, 1500); if ($r.Status -eq 'Success') { $r.RoundtripTime } }); if ($t.Count) { [int]($t | Measure-Object -Average).Average } else { $null } } catch { $null }
 }
 function Measure-Download([int]$Seconds = 12) {
-    $req = [Net.HttpWebRequest]::Create('https://speed.cloudflare.com/__down?bytes=200000000'); $req.Timeout = 15000
+    $req = [Net.HttpWebRequest]::Create('https://speed.cloudflare.com/__down?bytes=200000000'); $req.Timeout = 15000; $req.ReadWriteTimeout = 10000
     $resp = $req.GetResponse(); $st = $resp.GetResponseStream(); $buf = New-Object byte[] 65536
     $sw = [Diagnostics.Stopwatch]::StartNew(); $tot = 0
     while ($sw.Elapsed.TotalSeconds -lt $Seconds) { $n = $st.Read($buf, 0, $buf.Length); if ($n -le 0) { break }; $tot += $n }
@@ -777,7 +835,7 @@ function Measure-Download([int]$Seconds = 12) {
 }
 function Measure-Upload([int]$MB = 15) {
     $data = New-Object byte[] ($MB * 1MB); (New-Object Random).NextBytes($data)
-    $req = [Net.HttpWebRequest]::Create('https://speed.cloudflare.com/__up'); $req.Method = 'POST'; $req.ContentType = 'application/octet-stream'; $req.Timeout = 60000
+    $req = [Net.HttpWebRequest]::Create('https://speed.cloudflare.com/__up'); $req.Method = 'POST'; $req.ContentType = 'application/octet-stream'; $req.Timeout = 60000; $req.ReadWriteTimeout = 30000
     $req.ContentLength = $data.Length
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $st = $req.GetRequestStream(); $st.Write($data, 0, $data.Length); $st.Close()
@@ -1706,6 +1764,49 @@ Elemento ⇒ Item
 Prima ⇒ Before
 Dopo ⇒ After
 Generato da MultiTool ⇒ Generated by MultiTool
+{0} non ha risposto entro {1} secondi ⇒ {0} did not respond within {1} seconds
+Già installato ⇒ Already installed
+Già aggiornato ⇒ Already up to date
+Serve prima un riavvio ⇒ Restart required first
+Programma aperto: chiudilo e riprova ⇒ App is open: close it and try again
+Un'altra installazione è in corso ⇒ Another installation is in progress
+File in uso: chiudi il programma e riprova ⇒ File in use: close the app and try again
+Manca un componente richiesto ⇒ A required component is missing
+Disco pieno ⇒ Disk full
+Memoria insufficiente ⇒ Not enough memory
+Connessione a internet assente ⇒ No internet connection
+Annullato dall'utente ⇒ Cancelled by the user
+Già presente una versione più recente ⇒ A newer version is already installed
+Bloccato dai criteri aziendali ⇒ Blocked by company policy
+File scaricato non valido (hash diverso) ⇒ Downloaded file is invalid (hash mismatch)
+Nessun installer adatto a questo PC ⇒ No suitable installer for this PC
+Download non riuscito ⇒ Download failed
+Download degli aggiornamenti non riuscito ⇒ Update download failed
+Nuova versione di Windows ⇒ New Windows version
+Preferiti dei browser ⇒ Browser bookmarks
+PC acceso da {0} giorni senza riavvio: riavvialo (usa Riavvia, non Arresta) ⇒ PC running for {0} days without a restart: restart it (use Restart, not Shut down)
+Ancora installato (disinstallazione annullata?) ⇒ Still installed (uninstall cancelled?)
+Non eseguito ⇒ Not run
+Inventario hardware ⇒ Hardware inventory
+Collega l'alimentatore: i test di Windows non funzionano a batteria ⇒ Plug in the charger: Windows tests do not run on battery
+Avvisa prima di aprire programmi e file sconosciuti ⇒ Warns before opening unknown apps and files
+Isolamento core (integrità della memoria) ⇒ Core isolation (memory integrity)
+Protegge il kernel da driver e codice malevolo ⇒ Protects the kernel from malicious drivers and code
+si attiva da Sicurezza di Windows ⇒ turn it on from Windows Security
+RIPRISTINA ⇒ RESTORE
+modificato ⇒ changed
+Nessuna modifica da ripristinare ⇒ Nothing to restore
+{0} servizi di programmi non Microsoft. Impostarli su MANUALE alleggerisce l'avvio: partono solo quando servono. RIPRISTINA li riporta com'erano. ⇒ {0} non-Microsoft app services. Setting them to MANUAL lightens startup: they start only when needed. RESTORE puts them back as they were.
+Cache degli shader (DirectX, NVIDIA, AMD) ⇒ Shader cache (DirectX, NVIDIA, AMD)
+Verrà ricreata dai giochi al primo avvio ⇒ Games will rebuild it on first launch
+Log di Windows vecchi ⇒ Old Windows logs
+Log di installazione e diagnostica più vecchi di 14 giorni ⇒ Setup and diagnostic logs older than 14 days
+Ultimo avvio di Windows: {0} secondi ⇒ Last Windows startup: {0} seconds
+Copia ⇒ Copy
+Inventario copiato negli appunti ⇒ Inventory copied to the clipboard
+Appunti non disponibili, riprova ⇒ Clipboard unavailable, try again
+Novità di questa versione ⇒ What's new in this version
+MultiTool aggiornato alla versione {0}. Le novità sono in Ctrl+K › Novità ⇒ MultiTool updated to version {0}. See what's new in Ctrl+K › What's new
 '@
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml
 if (-not ('MtTr' -as [type])) {
@@ -1719,6 +1820,10 @@ if (-not ('MtTr' -as [type])) {
 # ============================================================
 #  MODALITÀ AUTOMATICA (attività pianificata)
 # ============================================================
+if ($Auto -or $Backup) {
+    $HeadMutex = New-Object Threading.Mutex($false, $(if ($Auto) { 'Local\MultiTool2026.Auto' } else { 'Local\MultiTool2026.Backup' }))
+    try { if (-not $HeadMutex.WaitOne(0)) { exit } } catch [Threading.AbandonedMutexException] {}
+}
 if ($Auto) {
     $sync = @{}
     $S = Get-Settings
@@ -1741,10 +1846,10 @@ if ($Auto) {
     Start-StoreScan
     $ok = 0; $err = 0
     try {
-        $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity'
+        $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity' 300
         foreach ($t in ConvertFrom-WingetTable $r.Out) {
             $c = $t.Cols
-            if ($c.Count -lt 4 -or $excl -contains $c[1]) { continue }
+            if ($c.Count -lt 4 -or $excl -contains $c[1] -or $c[1] -match '…$') { continue }
             $src = if ($c.Count -ge 5) { $c[4] } else { '' }
             $x = Invoke-Winget 'upgrade' $c[1] $src
             $k, $txt = Get-WingetResult $x.Code 'Aggiornato'
@@ -1768,7 +1873,7 @@ if ($Backup) {
     $root = Join-Path $S.BackupDest "MultiTool-Backup\$env:COMPUTERNAME"
     $n = 0; $err = 0
     foreach ($f in Get-BackupFolders | Where-Object { $_.Def -and $_.Path -and (Test-Path $_.Path) }) {
-        $r = Invoke-FolderBackup $f.Path (Join-Path $root $f.Name)
+        $r = Invoke-BackupEntry $f $root
         if ($r.Code -lt 8) { $n += [Math]::Max(0, $r.Copied) } else { $err++ }
     }
     $S.LastBackup = (Get-Date).ToString('s'); Save-Json 'settings.json' $S
@@ -1814,7 +1919,9 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 # --- Istanza unica ---
 $Mutex = New-Object Threading.Mutex($false, 'Local\MultiTool2026')
 $ShowEvt = New-Object Threading.EventWaitHandle($false, [Threading.EventResetMode]::AutoReset, 'Local\MultiTool2026.Show')
-if (-not $Mutex.WaitOne(0)) {
+$got = $false
+try { $got = $Mutex.WaitOne($(if ($Restart) { 20000 } else { 0 })) } catch [Threading.AbandonedMutexException] { $got = $true }
+if (-not $got) {
     [void]$ShowEvt.Set()
     exit
 }
@@ -2568,6 +2675,7 @@ $xaml = @'
                 <Button x:Name="HwLabel" Style="{StaticResource LinkBtn}" Content="Etichetta QR"/>
                 <Button x:Name="HwBat" Style="{StaticResource LinkBtn}" Content="Rapporto batteria"/>
                 <Button x:Name="HwAdv" Style="{StaticResource LinkBtn}" Content="Attiva sensori avanzati"/>
+                <Button x:Name="HwCopy" Style="{StaticResource LinkBtn}" Content="Copia"/>
                 <Button x:Name="HwExport" Style="{StaticResource LinkBtn}" Content="Esporta inventario"/>
                 <Button x:Name="HwReload" Style="{StaticResource LinkBtn}" Content="Aggiorna"/>
               </StackPanel>
@@ -2871,6 +2979,7 @@ $xaml = @'
 '@
 
 $TrEn = New-Object System.Collections.Hashtable ([StringComparer]::Ordinal)
+$TrEn['Copia'] = 'Copy'
 $TrEn['Servizi'] = 'Services'
 $TrEn['Processi'] = 'Processes'
 $TrEn['File grandi'] = 'Large files'
@@ -3156,7 +3265,7 @@ $excl = Read-Exclusions
 $sync.Status = 'Avvio la scansione del Microsoft Store…'
 Start-StoreScan
 $sync.Status = 'Interrogo winget, attendi qualche secondo…'
-$r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity'
+$r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity' 300
 foreach ($t in ConvertFrom-WingetTable $r.Out) {
     $c = $t.Cols
     if ($c.Count -lt 4) { continue }
@@ -3198,10 +3307,11 @@ $res = $sr.Search("IsInstalled=0 and IsHidden=0 and Type='Software'")
 foreach ($u in $res.Updates) {
     $kb  = (@($u.KBArticleIDs) | ForEach-Object { "KB$_" }) -join ', '
     $cat = @($u.Categories) | Select-Object -First 1 | ForEach-Object { $_.Name }
-    $tag = if ($u.MsrcSeverity) { $u.MsrcSeverity } elseif ($u.BrowseOnly) { 'Facoltativo' } else { 'Consigliato' }
+    $upg = @($u.Categories | Where-Object { $_.Name -eq 'Upgrades' }).Count -gt 0
+    $tag = if ($upg) { 'Nuova versione di Windows' } elseif ($u.MsrcSeverity) { $u.MsrcSeverity } elseif ($u.BrowseOnly) { 'Facoltativo' } else { 'Consigliato' }
     $kind = if ($u.MsrcSeverity -eq 'Critical') { 'err' } elseif ($u.BrowseOnly) { 'none' } else { 'info' }
     $rows.Add((New-Row @{ Name = $u.Title; Sub = ((@($kb, $cat) | Where-Object { $_ }) -join '  ·  '); Key = $u.Identity.UpdateID
-        C1 = (Format-Size ([double]$u.MaxDownloadSize)); Tag = $tag; TagKind = $kind; Selected = (-not $u.BrowseOnly) }))
+        C1 = (Format-Size ([double]$u.MaxDownloadSize)); Tag = $tag; TagKind = $kind; Selected = (-not $u.BrowseOnly -and -not $upg) }))
 }
 $n = $rows.Count
 $sync.ScanInfo = if ($n) { "$n aggiornamenti disponibili. I facoltativi non sono selezionati." } else { $null }
@@ -3265,7 +3375,7 @@ Invoke-Each $items {
 
 $ScanCatalog = @'
 $sync.Status = "Cerco `"$query`" nel catalogo…"
-$r = Invoke-Hidden (Get-WingetPath) ("search `"$query`" --accept-source-agreements --disable-interactivity")
+$r = Invoke-Hidden (Get-WingetPath) ("search `"$query`" --accept-source-agreements --disable-interactivity") 120
 foreach ($t in ConvertFrom-WingetTable $r.Out) {
     $c = $t.Cols
     $src = if ($c.Count -ge 4) { $c[-1] } else { '' }
@@ -3315,7 +3425,7 @@ foreach ($e in $list) {
     $tag = if ($msi) { 'MSI' } elseif ($e.QuietUninstallString) { 'silenziosa' } else { 'guidata' }
     $rows.Add((New-Row @{ Name = $e.DisplayName; Sub = [string]$e.Publisher; Key = $e.PSChildName; C1 = [string]$e.DisplayVersion
         C2 = $(if ($e.EstimatedSize) { Format-Size ([double]$e.EstimatedSize * 1KB) } else { '' }); Tag = $tag
-        Data = @{ Msi = $msi; Quiet = [string]$e.QuietUninstallString; Cmd = [string]$e.UninstallString } }))
+        Data = @{ Msi = $msi; Quiet = [string]$e.QuietUninstallString; Cmd = [string]$e.UninstallString; Reg = [string]$e.PSPath } }))
 }
 foreach ($a in Get-AppxPackage -ErrorAction SilentlyContinue | Where-Object { -not $_.IsFramework -and -not $_.NonRemovable -and $_.SignatureKind -eq 'Store' } | Sort-Object Name) {
     $nm = ($a.Name -replace '^[^\.]+\.', '') -replace '([a-z])([A-Z])', '$1 $2'
@@ -3340,7 +3450,7 @@ Invoke-Each $items {
     } else {
         $cmd = if ($silent -and $d.Quiet) { $d.Quiet } else { $d.Cmd }
         $f, $a = Split-CommandLine $cmd
-        if ($f -match 'msiexec') { $a = $a -replace '/I', '/X'; if ($silent) { $a += ' /qn /norestart' } }
+        if ($f -match 'msiexec') { $a = $a -replace '(?i)(^|\s)/I(?=\s*\{)', '$1/X'; if ($silent) { $a += ' /qn /norestart' } }
         $dir = $env:SystemRoot
         try { $dir = Split-Path $f -ErrorAction Stop } catch {}
         $code = Run-Wait $f $a $dir 'Normal'
@@ -3348,6 +3458,7 @@ Invoke-Each $items {
         Wait-Uninstallers $t0
     }
     Set-ExitResult $it $code 'Disinstallato'
+    if ($it.StatusKind -eq 'ok' -and $d.Reg) { Start-Sleep -Seconds 2; if (Test-Path -LiteralPath $d.Reg) { Set-It $it 'err' 'Ancora installato (disinstallazione annullata?)' } }
 } 'Disinstallo'
 '@
 
@@ -3392,7 +3503,13 @@ foreach ($t in Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { 
         Tag = $(if ($en) { 'attivo' } else { 'disattivato' }); TagKind = $(if ($en) { 'ok' } else { 'warn' }) }))
 }
 $on = @($rows | Where-Object { $_.Tag -eq 'attivo' }).Count
-$sync.ScanInfo = "$($rows.Count) programmi all'avvio, $on attivi. Seleziona e scegli ATTIVA o DISATTIVA."
+$boot = ''
+try {
+    $ev = Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Diagnostics-Performance/Operational'; Id = 100 } -MaxEvents 1 -ErrorAction Stop
+    $ms = (([xml]$ev.ToXml()).Event.EventData.Data | Where-Object { $_.Name -eq 'BootTime' }).'#text'
+    if ($ms) { $boot = "  ·  Ultimo avvio di Windows: $([math]::Round([double]$ms / 1000)) secondi" }
+} catch {}
+$sync.ScanInfo = "$($rows.Count) programmi all'avvio, $on attivi. Seleziona e scegli ATTIVA o DISATTIVA.$boot"
 '@
 
 $ActStartup = @'
@@ -3521,7 +3638,7 @@ foreach ($t in Get-PrivacyTweaks) {
 foreach ($b in Get-BloatApps) {
     $pk = @(Get-AppxPackage -Name $b.N -ErrorAction SilentlyContinue)
     if (-not $pk.Count) { continue }
-    $rows.Add((New-Row @{ Name = "Rimuovi app: $($b.T)"; Sub = "$($pk[0].Name)  ·  reinstallabile dal Microsoft Store"; Key = $b.N; Data = @{ Kind = 'appx' }
+    $rows.Add((New-Row @{ Name = "Rimuovi app: $($b.T)"; Sub = "$($pk[0].Name)  ·  reinstallabile dal Microsoft Store"; Key = $b.N; Data = @{ Kind = 'appx'; T = $b.T }
         Selected = $false; Tag = 'installata'; TagKind = 'warn'; Glyph = [string][char]0xE74D }))
 }
 $sync.ScanInfo = 'APPLICA attiva le opzioni selezionate, RIPRISTINA riporta i valori di prima (salvati in Dati\privacy-backup.json).'
@@ -3545,7 +3662,7 @@ Invoke-Each $items {
                 Add-AppxPackage -DisableDevelopmentMode -Register "$($pk.InstallLocation)\AppXManifest.xml" -ErrorAction Stop
                 Set-It $it 'ok' 'Reinstallata'
             } else {
-                Start-Process ("ms-windows-store://search/?query=" + [uri]::EscapeDataString(($it.Name -replace '^Rimuovi app: ', '')))
+                Start-Process ("ms-windows-store://search/?query=" + [uri]::EscapeDataString(([string]$it.Data.T -replace '\s*\(.*$', '')))
                 Set-It $it 'skip' 'Reinstalla dallo Store'
             }
         }
@@ -3613,7 +3730,7 @@ while ($sync.SensGen -eq $gen -and ($sync.SensOn -or $sync.SensLog)) {
             $os = Get-CimInstance Win32_OperatingSystem
             [void]$out.Add(@{ K = 'ram'; N = 'Memoria usata'; G = 'RAM'; T = 'Load'; V = [math]::Round((1 - $os.FreePhysicalMemory / $os.TotalVisibleMemorySize) * 100); U = '%' })
             if ($smi) {
-                $r = Invoke-Hidden $smi '--query-gpu=name,temperature.gpu,fan.speed,utilization.gpu,clocks.gr,power.draw --format=csv,noheader,nounits'
+                $r = Invoke-Hidden $smi '--query-gpu=name,temperature.gpu,fan.speed,utilization.gpu,clocks.gr,power.draw --format=csv,noheader,nounits' 15
                 foreach ($l in ($r.Out -split "`n" | Where-Object { $_.Trim() })) {
                     $p = $l.Split(',') | ForEach-Object { $_.Trim() }
                     $map = @(@(1, 'Temperatura GPU', 'Temperature', '°C'), @(2, 'Ventola GPU', 'Control', '%'), @(3, 'Carico GPU', 'Load', '%'), @(4, 'Frequenza GPU', 'Clock', 'MHz'), @(5, 'Consumo GPU', 'Power', 'W'))
@@ -3691,7 +3808,7 @@ $dest = (Get-Settings).BackupDest
 foreach ($f in Get-BackupFolders) {
     if (-not $f.Path -or -not (Test-Path $f.Path)) { continue }
     $sync.Status = "Calcolo: $($f.Name)…"
-    $sz = Get-DirSize @($f.Path)
+    $sz = Get-BackupEntrySize $f
     $rows.Add((New-Row @{ Name = $f.Name; Sub = $f.Path; Key = $f.Id; Data = $f.Path; C1 = (Format-Size $sz); Selected = $f.Def; Glyph = [string][char]0xE8B7 }))
 }
 $sync.ScanInfo = if ($dest) { "Destinazione: $dest\MultiTool-Backup\$env:COMPUTERNAME  ·  copia solo i file nuovi o modificati, non cancella nulla" } else { 'Scegli prima la destinazione (disco esterno o cartella di rete) con il pulsante in alto.' }
@@ -3703,8 +3820,9 @@ if (-not $dest -or -not (Test-Path $dest)) { throw 'Destinazione del backup non 
 $root = Join-Path $dest "MultiTool-Backup\$env:COMPUTERNAME"
 Invoke-Each $items {
     param($it)
-    $r = Invoke-FolderBackup ([string]$it.Data) (Join-Path $root $it.Name)
-    $it.C2 = Format-Size (Get-DirSize @(Join-Path $root $it.Name))
+    $f = Get-BackupFolders | Where-Object { $_.Id -eq $it.Key } | Select-Object -First 1
+    $r = Invoke-BackupEntry $f $root
+    $it.C2 = Format-Size (Get-DirSize @(Join-Path $root $f.Name))
     if ($r.Code -lt 8) { Set-It $it 'ok' $(if ($r.Copied -ge 0) { "$($r.Copied) file copiati" } else { 'Completato' }) } else { Set-It $it 'err' "Errore robocopy $($r.Code)" }
 } 'Copio'
 $sync.LastBackup = (Get-Date).ToString('s')
@@ -3717,7 +3835,7 @@ foreach ($n in Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Ob
     $ip = (Get-NetIPAddress -InterfaceIndex $n.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1).IPAddress
     $rows.Add((New-Row @{ Name = $n.Name; Sub = $n.InterfaceDescription; C1 = $ip; C2 = $n.LinkSpeed; Tag = 'connessa'; TagKind = 'ok'; Checkable = $false; Glyph = [string][char]0xE774 }))
 }
-$wl = (Invoke-Hidden "$env:SystemRoot\System32\netsh.exe" 'wlan show interfaces').Out
+$wl = (Invoke-Hidden "$env:SystemRoot\System32\netsh.exe" 'wlan show interfaces' 30).Out
 $ssid = [regex]::Match($wl, '(?m)^\s*SSID\s*:\s*(.+)$').Groups[1].Value.Trim()
 if ($ssid) {
     $sig = [regex]::Match($wl, '(?m)^\s*(Signal|Segnale)\s*:\s*(\d+)%').Groups[2].Value
@@ -3756,7 +3874,7 @@ if ($op -eq 'speed') {
 } else {
     foreach ($c in @(@('ipconfig.exe', '/flushdns'), @('netsh.exe', 'winsock reset'), @('netsh.exe', 'int ip reset'), @('ipconfig.exe', '/release'), @('ipconfig.exe', '/renew'))) {
         $sync.Status = "Eseguo $($c[0]) $($c[1])…"
-        [void](Invoke-Hidden "$env:SystemRoot\System32\$($c[0])" $c[1])
+        try { [void](Invoke-Hidden "$env:SystemRoot\System32\$($c[0])" $c[1] 120) } catch {}
     }
     $sync.Reboot = $true
     Add-History $area 'Ripara connessione' 'Eseguito' 'ok'
@@ -3774,17 +3892,32 @@ function Chk([string]$Name, [string]$Sub, [string]$Val, [string]$Kind, [string]$
         Checkable = [bool]($Fix -and $Kind -ne 'ok'); Selected = [bool]($Fix -and $Kind -ne 'ok') })) | Out-Null
 }
 $sync.Status = 'Antivirus…'
-try {
+$tpav = @(Get-SecProducts 'AntiVirusProduct')
+if ($tpav.Count) { Chk 'Antivirus' ([string]$tpav[0].displayName) 'attivo' 'ok' '' }
+else { try {
     $mp = Get-MpComputerStatus -ErrorAction Stop
     Chk 'Protezione in tempo reale' 'Microsoft Defender' $(if ($mp.RealTimeProtectionEnabled) { 'attiva' } else { 'disattiva' }) $(if ($mp.RealTimeProtectionEnabled) { 'ok' } else { 'err' }) 'rtp'
     Chk 'Firme antivirus' "Aggiornate il $($mp.AntivirusSignatureLastUpdated.ToString('dd/MM/yyyy'))" "$($mp.AntivirusSignatureAge) giorni" $(if ($mp.AntivirusSignatureAge -le 3) { 'ok' } else { 'warn' }) 'sig'
     $qa = if ($mp.QuickScanAge -lt 1000) { "$($mp.QuickScanAge) giorni fa" } else { 'mai' }
     Chk 'Ultima scansione rapida' 'Defender' $qa $(if ($mp.QuickScanAge -le 7) { 'ok' } else { 'warn' }) 'scan'
-} catch { Chk 'Antivirus' 'Defender non attivo: probabilmente c''è un antivirus di terze parti' 'n.d.' 'warn' '' }
+} catch { Chk 'Antivirus' 'Defender non attivo: probabilmente c''è un antivirus di terze parti' 'n.d.' 'warn' '' } }
 $sync.Status = 'Firewall…'
-foreach ($f in Get-NetFirewallProfile -ErrorAction SilentlyContinue) {
-    Chk "Firewall · profilo $($f.Name)" 'Windows Defender Firewall' $(if ($f.Enabled) { 'attivo' } else { 'disattivo' }) $(if ($f.Enabled) { 'ok' } else { 'err' }) 'fw'
+$tpfw = @(Get-SecProducts 'FirewallProduct')
+if ($tpfw.Count) { Chk 'Firewall' ([string]$tpfw[0].displayName) 'attivo' 'ok' '' }
+else {
+    foreach ($f in Get-NetFirewallProfile -ErrorAction SilentlyContinue) {
+        Chk "Firewall · profilo $($f.Name)" 'Windows Defender Firewall' $(if ($f.Enabled) { 'attivo' } else { 'disattivo' }) $(if ($f.Enabled) { 'ok' } else { 'err' }) 'fw'
+    }
 }
+$ss = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer' -ErrorAction SilentlyContinue).SmartScreenEnabled
+$ssp = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' -ErrorAction SilentlyContinue).EnableSmartScreen
+$ssOff = ($ss -eq 'Off') -or ($ssp -eq 0)
+Chk 'SmartScreen' 'Avvisa prima di aprire programmi e file sconosciuti' $(if ($ssOff) { 'disattivo' } else { 'attivo' }) $(if ($ssOff) { 'warn' } else { 'ok' }) 'smartscreen'
+try {
+    $dg = Get-CimInstance -Namespace root\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard -ErrorAction Stop
+    $hvci = @($dg.SecurityServicesRunning) -contains 2
+    Chk 'Isolamento core (integrità della memoria)' 'Protegge il kernel da driver e codice malevolo  ·  si attiva da Sicurezza di Windows' $(if ($hvci) { 'attivo' } else { 'disattivo' }) $(if ($hvci) { 'ok' } else { 'warn' }) ''
+} catch {}
 $lua = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -ErrorAction SilentlyContinue).EnableLUA
 Chk 'Controllo account utente (UAC)' 'Chiede conferma prima delle modifiche di sistema' $(if ($lua -ne 0) { 'attivo' } else { 'disattivo' }) $(if ($lua -ne 0) { 'ok' } else { 'err' }) 'uac'
 $sbv = 'n.d.'; $sbk = 'warn'
@@ -3821,6 +3954,10 @@ Invoke-Each $items {
         'admin'   { Get-LocalUser | Where-Object { $_.SID -like '*-500' } | Disable-LocalUser -ErrorAction Stop }
         'smb1'    { Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol -NoRestart -ErrorAction Stop | Out-Null; $sync.Reboot = $true }
         'rdp'     { Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 1 -Type DWord }
+        'smartscreen' {
+            Set-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer' -Name SmartScreenEnabled -Value 'Warn' -Type String
+            Remove-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' -Name EnableSmartScreen -ErrorAction SilentlyContinue
+        }
         'autorun' { $k = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer'; if (-not (Test-Path $k)) { New-Item $k -Force | Out-Null }; Set-ItemProperty $k -Name NoDriveTypeAutoRun -Value 255 -Type DWord }
     }
     Set-It $it 'ok' 'Corretto'
@@ -3838,12 +3975,13 @@ $sync.ScanInfo = 'Test di Windows (WinSAT): circa 1-3 minuti in tutto. Chiudi gl
 '@
 
 $ActBench = @'
+if (@(Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue | Where-Object { $_.BatteryStatus -eq 1 }).Count) { throw 'Collega l''alimentatore: i test di Windows non funzionano a batteria' }
 $res = @{}
 $prev = Read-Json 'bench.json' $null
 if ($prev) { foreach ($p in $prev.PSObject.Properties) { $res[$p.Name] = $p.Value } }
 Invoke-Each $items {
     param($it)
-    $r = Invoke-Hidden "$env:SystemRoot\System32\winsat.exe" ([string]$it.Data)
+    $r = Invoke-Hidden "$env:SystemRoot\System32\winsat.exe" ([string]$it.Data) 600
     $m = [regex]::Matches($r.Out, '([\d\.,]+)\s*MB/s')
     if (-not $m.Count) { Set-It $it 'err' 'Nessun risultato'; return }
     $v = [double](($m[$m.Count - 1].Groups[1].Value) -replace ',', '.')
@@ -3884,6 +4022,8 @@ if ($op -eq 'create') {
 
 $ScanServices = @'
 $sync.Status = 'Leggo i servizi…'
+$changed = @{}; $j = Read-Json 'services-backup.json' $null
+if ($j) { foreach ($p in $j.PSObject.Properties) { $changed[$p.Name] = 1 } }
 $win = "$env:SystemRoot\".ToLower()
 foreach ($sv in Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | Sort-Object DisplayName) {
     $path = [string]$sv.PathName
@@ -3894,25 +4034,39 @@ foreach ($sv in Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | So
     if ($co -match '^Microsoft') { continue }
     $mode = switch ($sv.StartMode) { 'Auto' { 'automatico' } 'Manual' { 'manuale' } 'Disabled' { 'disattivato' } default { [string]$sv.StartMode } }
     $rows.Add((New-Row @{ Name = $sv.DisplayName; Sub = "$(if ($co) { "$co  ·  " })$exe"; Key = $sv.Name; C1 = $mode
-        C2 = $(if ($sv.State -eq 'Running') { 'in esecuzione' } else { 'fermo' }); Tag = $mode
-        TagKind = $(switch ($sv.StartMode) { 'Auto' { 'info' } 'Disabled' { 'warn' } default { 'none' } }) })) | Out-Null
+        C2 = $(if ($sv.State -eq 'Running') { 'in esecuzione' } else { 'fermo' }); Tag = $(if ($changed[$sv.Name]) { 'modificato' } else { $mode })
+        TagKind = $(if ($changed[$sv.Name]) { 'warn' } else { switch ($sv.StartMode) { 'Auto' { 'info' } 'Disabled' { 'warn' } default { 'none' } } }) })) | Out-Null
 }
-$sync.ScanInfo = "$($rows.Count) servizi di programmi non Microsoft. Impostarli su MANUALE alleggerisce l'avvio: partono solo quando servono."
+$sync.ScanInfo = "$($rows.Count) servizi di programmi non Microsoft. Impostarli su MANUALE alleggerisce l'avvio: partono solo quando servono. RIPRISTINA li riporta com'erano."
 '@
 
 $ActServices = @'
+$bk = @{}; $j = Read-Json 'services-backup.json' $null
+if ($j) { foreach ($p in $j.PSObject.Properties) { $bk[$p.Name] = $p.Value } }
 Invoke-Each $items {
     param($it)
-    $type = if ($op -eq 'manual') { 'Manual' } else { 'Automatic' }
-    Set-Service -Name $it.Key -StartupType $type -ErrorAction Stop
-    $it.C1 = $(if ($op -eq 'manual') { 'manuale' } else { 'automatico' }); $it.Tag = $it.C1
-    Set-It $it 'ok' $(if ($op -eq 'manual') { 'Impostato su manuale' } else { 'Impostato su automatico' })
-} 'Imposto'
+    $rk = "HKLM:\SYSTEM\CurrentControlSet\Services\$($it.Key)"
+    if ($op -eq 'manual') {
+        if (-not $bk.ContainsKey($it.Key)) { $cur = Get-ItemProperty $rk -ErrorAction Stop; $bk[$it.Key] = @{ Start = [int]$cur.Start; Delayed = [int]$cur.DelayedAutostart } }
+        Set-Service -Name $it.Key -StartupType Manual -ErrorAction Stop
+        $it.C1 = 'manuale'; $it.Tag = 'modificato'; $it.TagKind = 'warn'
+        Set-It $it 'ok' 'Impostato su manuale'
+    } else {
+        $b = $bk[$it.Key]
+        if (-not $b) { Set-It $it 'skip' 'Nessuna modifica da ripristinare'; return }
+        Set-ItemProperty $rk -Name Start -Value ([int]$b.Start) -Type DWord -ErrorAction Stop
+        if ([int]$b.Delayed) { Set-ItemProperty $rk -Name DelayedAutostart -Value 1 -Type DWord } else { Remove-ItemProperty $rk -Name DelayedAutostart -ErrorAction SilentlyContinue }
+        $bk.Remove($it.Key)
+        $it.C1 = $(switch ([int]$b.Start) { 2 { 'automatico' } 3 { 'manuale' } 4 { 'disattivato' } default { 'sistema' } }); $it.Tag = $it.C1; $it.TagKind = 'none'
+        Set-It $it 'ok' 'Ripristinato'
+    }
+} $(if ($op -eq 'manual') { 'Imposto' } else { 'Ripristino' })
+Save-Json 'services-backup.json' $bk
 '@
 
 $ScanProcesses = @'
 $sync.Status = 'Misuro l''uso di CPU e memoria…'
-$crit = 'Idle', 'System', 'Registry', 'smss', 'csrss', 'wininit', 'winlogon', 'services', 'lsass', 'svchost', 'dwm', 'fontdrvhost', 'Memory Compression', 'MsMpEng', 'SecurityHealthService', 'spoolsv', 'audiodg', 'sihost', 'ctfmon'
+$crit = 'Idle', 'System', 'Registry', 'smss', 'csrss', 'wininit', 'winlogon', 'services', 'lsass', 'svchost', 'dwm', 'fontdrvhost', 'Memory Compression', 'MsMpEng', 'SecurityHealthService', 'spoolsv', 'audiodg', 'sihost', 'ctfmon', 'explorer', 'MultiTool', 'winlogon', 'LsaIso', 'SgrmBroker'
 $a = @{}; foreach ($p in Get-Process -ErrorAction SilentlyContinue) { try { $a[$p.Id] = $p.TotalProcessorTime.TotalMilliseconds } catch {} }
 Start-Sleep -Milliseconds 1000
 $cores = [Environment]::ProcessorCount
@@ -3941,13 +4095,17 @@ $root = if ($all) { "$env:SystemDrive\" } else { $env:USERPROFILE }
 $skip = "$env:SystemRoot".ToLower()
 $sync.Status = "Cerco i file più grandi in $root… (può richiedere qualche minuto)"
 $big = New-Object System.Collections.Generic.List[object]
-$n = 0
-foreach ($f in Get-ChildItem $root -Recurse -File -Force -ErrorAction SilentlyContinue) {
-    $n++; if ($n % 5000 -eq 0) { $sync.Status = "Analizzati $n file…" }
-    if ($f.Length -lt 100MB) { continue }
-    if ($f.FullName.ToLower().StartsWith($skip) -or ($f.Attributes -band [IO.FileAttributes]::Offline) -or $f.Name -in 'pagefile.sys', 'hiberfil.sys', 'swapfile.sys') { continue }
-    $big.Add($f)
+$n = 0; $script:n = 0
+$skipDirs = $skip, "$env:SystemDrive\`$recycle.bin", "$env:SystemDrive\system volume information", "$env:SystemDrive\recovery"
+$tops = @(Get-ChildItem $root -Force -ErrorAction SilentlyContinue | Where-Object { $skipDirs -notcontains $_.FullName.ToLower() })
+$gen = { foreach ($t in $tops) { if (-not $t.PSIsContainer) { $t } elseif (-not ($t.Attributes -band [IO.FileAttributes]::ReparsePoint)) { Get-ChildItem $t.FullName -Recurse -File -Force -ErrorAction SilentlyContinue } } }
+& $gen | ForEach-Object {
+    $script:n++; if ($script:n % 5000 -eq 0) { $sync.Status = "Analizzati $($script:n) file…" }
+    if ($_.Length -lt 100MB) { return }
+    if (([int64]$_.Attributes -band 0x441000) -or $_.Name -in 'pagefile.sys', 'hiberfil.sys', 'swapfile.sys') { return }
+    $big.Add($_)
 }
+$n = $script:n
 foreach ($f in $big | Sort-Object Length -Descending | Select-Object -First 100) {
     $rows.Add((New-Row @{ Name = $f.Name; Sub = $f.DirectoryName; Key = $f.FullName; C1 = (Format-Size $f.Length); C2 = $f.LastWriteTime.ToString('dd/MM/yyyy')
         Tag = $(if ($f.LastAccessTime -lt (Get-Date).AddYears(-1)) { 'non usato da 1 anno' } else { '' }); TagKind = 'warn' })) | Out-Null
@@ -4017,6 +4175,9 @@ try {
     $info.Def    = if ($info.DefOk) { 'Attiva' } else { 'Disattivata' }
     $info.DefSig = 'Firme del ' + $mp.AntivirusSignatureLastUpdated.ToString('dd/MM/yyyy')
 } catch { $info.DefOk = $null; $info.Def = 'Non rilevata'; $info.DefSig = 'Antivirus di terze parti?' }
+$tpav = @(Get-SecProducts 'AntiVirusProduct')
+if ($tpav.Count) { $info.DefOk = $true; $info.Def = 'Attiva'; $info.DefSig = [string]$tpav[0].displayName }
+$info.UpDays = 0; try { $info.UpDays = [int]((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalDays } catch {}
 try {
     $info.PD = @(Get-PhysicalDisk -ErrorAction Stop | ForEach-Object {
         $rc = $_ | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue
@@ -4171,7 +4332,7 @@ $Modes = @{
 
     services = @{ Nav = 'NavServices'; Title = 'Servizi'; Glyph = (G 0xE912); AfterDone = 'review'
         Sub = 'Lettura dei servizi…'; H = 'AVVIO', 'STATO', '', 'ESITO'; Scan = $ScanServices; Action = $ActServices; Restore = $true
-        Go = 'IMPOSTA MANUALE'; GoOp = 'manual'; Go2 = 'IMPOSTA AUTOMATICO'; Go2Op = 'auto'
+        Go = 'IMPOSTA MANUALE'; GoOp = 'manual'; Go2 = 'RIPRISTINA'; Go2Op = 'restore'
         ConfirmOp = @{ manual = 'I servizi selezionati partiranno solo quando servono. Se un programma smette di funzionare, rimettilo su AUTOMATICO. Procedere?' }
         X1 = @{ Text = 'Servizi di Windows'; Click = { Start-Process services.msc } }
         X2 = @{ Text = 'Ricarica'; Click = { Start-Scan } }
@@ -4407,7 +4568,7 @@ function Start-Action([string]$op) {
     $sync.Total = [Math]::Max(1, $sel.Count); $sync.Done = 0; $sync.Cancel = $false; $sync.Extra = ''; $sync.ExtraRows = $null
     $sync.Status = 'Operazione in corso…'; $sync.Phase = 'run'
     $ui.LGo.IsEnabled = $false; $ui.LGo2.IsEnabled = $false
-    $ui.LCancel.Content = 'ANNULLA'; $ui.LCancel.IsEnabled = $true
+    $ui.LCancel.Content = T 'ANNULLA'; $ui.LCancel.IsEnabled = $true
     Set-Busy $true
     [void][NativePow.Power]::SetThreadExecutionState(0x80000001)
     $restore = [bool]$M.Restore -and [bool]$Settings.Restore -and $op -notin 'web', 'restore', 'enable'
@@ -4420,6 +4581,7 @@ if ($restore) {
 try {
 '@ + "`n" + $M.Action + "`n" + @'
 } catch { $sync.Extra = 'Errore: ' + $_.Exception.Message; Write-ErrLog "Azione $area`: $($_.Exception.Message)" }
+foreach ($x in @($items)) { if ($x.StatusKind -in 'wait', 'run') { Set-It $x 'skip' 'Non eseguito' } }
 $sync.Phase = 'done'
 '@
     Start-Bg $code @{ items = $sel; op = $op; silent = [bool]$ui.LSilent.IsChecked; area = $M.Title; restore = $restore }
@@ -4511,14 +4673,14 @@ function Export-Hw {
     $file = Join-Path $dir ('{0}-Inventario-hardware.html' -f (Get-Date -Format 'yyyyMMdd-HHmm'))
     $E = { param($t) [Net.WebUtility]::HtmlEncode([string]$t) }
     $body = foreach ($c in $State.HwCards) {
-        "<h2>$(& $E $c.T)</h2><table>" + (($c.Rows | ForEach-Object { "<tr><th>$(& $E $_.L)</th><td>$(& $E $_.V)</td></tr>" }) -join '') + '</table>'
+        "<h2>$(& $E (T $c.T))</h2><table>" + (($c.Rows | ForEach-Object { "<tr><th>$(& $E (T $_.L))</th><td>$(& $E (T $_.V))</td></tr>" }) -join '') + '</table>'
     }
     $html = @"
-<!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>Inventario hardware - $env:COMPUTERNAME</title>
+<!DOCTYPE html><html lang="$(if ([MtTr]::On) { 'en' } else { 'it' })"><head><meta charset="utf-8"><title>$(T 'Inventario hardware') - $env:COMPUTERNAME</title>
 <style>body{font-family:Segoe UI,sans-serif;background:#f4f5f9;color:#1b1e27;margin:40px;max-width:1000px}h1{margin:0}h2{font-size:17px;margin:28px 0 8px}
 table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px #0001}
 th,td{padding:9px 14px;text-align:left;border-bottom:1px solid #eceef4;font-size:14px}th{width:220px;color:#5b6175;font-weight:600}.m{color:#5b6175}</style></head>
-<body><h1>Inventario hardware</h1><p class="m">$env:COMPUTERNAME  ·  $(Get-Date -Format 'dd/MM/yyyy HH:mm')  ·  MultiTool $AppVersion</p>$($body -join '')</body></html>
+<body><h1>$(T 'Inventario hardware')</h1><p class="m">$env:COMPUTERNAME  ·  $(Get-Date -Format 'dd/MM/yyyy HH:mm')  ·  MultiTool $AppVersion</p>$($body -join '')</body></html>
 "@
     Set-Content -Path $file -Value $html -Encoding UTF8
     Start-Process $file
@@ -4694,6 +4856,7 @@ foreach ($c in @(
     @{ N = 'Importa configurazione di MultiTool'; A = { Import-Config } }
     @{ N = 'Controlla aggiornamenti di MultiTool'; A = { Start-UpdCheck; Show-View 'ViewSettings' } }
     @{ N = 'Informazioni e note legali'; A = { Show-About $false } }
+    @{ N = 'Novità di questa versione'; A = { Start-Process "$AppRepo/releases/tag/v$AppVersion" } }
     @{ N = 'Apri cartella dati'; A = { Start-Process explorer.exe $DataDir } }
     @{ N = 'Gestione dispositivi'; A = { Start-Process devmgmt.msc } }
     @{ N = 'Rapporto batteria'; A = { New-BatteryReport } }
@@ -4750,6 +4913,10 @@ $win.Add_PreviewKeyDown({
     if ($ui.Palette.Visibility -eq 'Visible') { return }
     if (-not $ui.NavPanel.IsEnabled -and $sync.Phase -ne 'run') { return }
     if ($ctrl -and $e.Key -eq 'H' -and $sync.Phase -ne 'run') { Go-Home; $e.Handled = $true; return }
+    if ($ctrl -and $e.Key -eq 'F' -and $ui.ViewList.Visibility -eq 'Visible' -and $Items.Count) {
+        if ($Modes[$State.Mode].Search) { [void]$ui.LSearch.Focus() } else { $ui.LFilterBox.Visibility = 'Visible'; [void]$ui.LFilter.Focus() }
+        $e.Handled = $true; return
+    }
     if ($e.Key -eq 'F5' -and $sync.Phase -ne 'run') {
         if ($ui.ViewList.Visibility -eq 'Visible' -and -not $Modes[$State.Mode].Search) { Start-Scan }
         elseif ($ui.ViewHw.Visibility -eq 'Visible') { Load-Hw; Start-Sensors }
@@ -4828,6 +4995,7 @@ function Test-HealthAlarms($i) {
     foreach ($d in @($i.Disks)) { if ($d.Size -and $d.Free / $d.Size -lt 0.1) { $al += "Disco $($d.Name): solo $(Format-Size $d.Free) liberi" } }
     if ($i.Bat -and $null -ne $i.Bat.Health -and $i.Bat.Health -lt 50) { $al += "Batteria: capacità al $($i.Bat.Health)%" }
     if ($i.DefOk -eq $false) { $al += 'Antivirus Microsoft Defender disattivato' }
+    if ($i.UpDays -ge 7) { $al += "PC acceso da $($i.UpDays) giorni senza riavvio: riavvialo (usa Riavvia, non Arresta)" }
     if ($State.LastOps) {
         $lm = @($State.LastOps['full'], $State.LastOps['upd']) | Where-Object { $_ } | Sort-Object -Descending | Select-Object -First 1
         if (-not $lm -or $lm -lt (Get-Date).AddDays(-30)) { $al += 'Manutenzione: non eseguita da oltre 30 giorni' }
@@ -4912,7 +5080,7 @@ function Install-SelfUpdate {
 function Restart-App {
     $State.ForceClose = $true
     $hid = if (-not $win.IsVisible -and $Settings.Tray) { ' -Hidden' } else { '' }
-    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`"$hid" -WindowStyle Hidden
+    Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ScriptPath`" -Restart$hid" -WindowStyle Hidden
     $Mutex.ReleaseMutex()
     $win.Close()
 }
@@ -4925,6 +5093,8 @@ $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $miOpen = $menu.Items.Add((T 'Apri MultiTool'))
 $miUpd  = $menu.Items.Add((T 'Aggiorna programmi'))
 $miFull = $menu.Items.Add((T 'Manutenzione completa'))
+$miClean = $menu.Items.Add((T 'Pulizia disco'))
+$miHw = $menu.Items.Add((T 'Hardware'))
 [void]$menu.Items.Add('-')
 $miExit = $menu.Items.Add((T 'Esci'))
 $Tray.ContextMenuStrip = $menu
@@ -4934,14 +5104,16 @@ $Tray.Add_BalloonTipClicked({ Show-Main; Open-Mode 'updates' })
 $miOpen.Add_Click({ Show-Main })
 $miUpd.Add_Click({ Show-Main; Open-Mode 'updates' })
 $miFull.Add_Click({ Show-Main; Open-Mode 'full' })
+$miClean.Add_Click({ Show-Main; if ($sync.Phase -ne 'run') { Open-Mode 'cleanup' } })
+$miHw.Add_Click({ Show-Main; if ($sync.Phase -ne 'run') { Open-Hw } })
 $miExit.Add_Click({ $State.ForceClose = $true; Show-Main; $win.Close() })
 $Tray.Visible = [bool]$Settings.Tray
 
 $CountCode = @'
 try {
     $excl = Read-Exclusions
-    $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity'
-    $sync.UpdCount = @(ConvertFrom-WingetTable $r.Out | Where-Object { $_.Cols.Count -ge 4 -and $excl -notcontains $_.Cols[1] }).Count
+    $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity' 300
+    $sync.UpdCount = @(ConvertFrom-WingetTable $r.Out | Where-Object { $_.Cols.Count -ge 4 -and $excl -notcontains $_.Cols[1] -and $_.Cols[1] -notmatch '…$' }).Count
 } catch { $sync.UpdCount = -1 }
 '@
 function Start-CountCheck { $sync.UpdCount = $null; Start-Bg $CountCode @{} }
@@ -4950,7 +5122,7 @@ $bgTimer.Interval = [TimeSpan]::FromHours(6)
 $sync.Online = $true
 $netTimer = New-Object Windows.Threading.DispatcherTimer
 $netTimer.Interval = [TimeSpan]::FromSeconds(60)
-$netTimer.Add_Tick({ Start-Bg '$sync.Online = Test-Online' @{} })
+$netTimer.Add_Tick({ if ($win.IsVisible) { Start-Bg '$sync.Online = Test-Online' @{} } })
 $netTimer.Start()
 Start-Bg '$sync.Online = Test-Online' @{}
 $bgTimer.Add_Tick({ if ($sync.Phase -ne 'run') { Start-CountCheck; Start-UpdCheck; Refresh-Info } })
@@ -5046,12 +5218,17 @@ $ui.LAll.Add_Click({  foreach ($i in $ListView) { if ($i.Checkable -and $i.Edita
 $ui.LNone.Add_Click({ foreach ($i in $ListView) { if ($i.Checkable -and $i.Editable) { $i.Selected = $false } } })
 $ui.LCsv.Add_Click({ Export-ListCsv })
 $ui.HwBat.Add_Click({ New-BatteryReport })
+$ui.HwCopy.Add_Click({
+    if (-not $State.HwCards) { Toast 'Attendi la fine della raccolta delle informazioni'; return }
+    $txt = ($State.HwCards | ForEach-Object { "== $(T $_.T) ==`r`n" + (($_.Rows | ForEach-Object { "$(T $_.L): $(T $_.V)" }) -join "`r`n") }) -join "`r`n`r`n"
+    try { [Windows.Clipboard]::SetText("$env:COMPUTERNAME`r`n`r`n$txt"); Toast 'Inventario copiato negli appunti' } catch { Toast 'Appunti non disponibili, riprova' }
+})
 $ui.LGo.Add_Click({  Start-Action ([string]$Modes[$State.Mode].GoOp) })
 $ui.LGo2.Add_Click({ Start-Action ([string]$Modes[$State.Mode].Go2Op) })
 $ui.LCancel.Add_Click({
     if ($sync.Phase -eq 'run') {
         $sync.Cancel = $true
-        $ui.LCancel.IsEnabled = $false; $ui.LCancel.Content = 'Annullamento…'
+        $ui.LCancel.IsEnabled = $false; $ui.LCancel.Content = T 'Annullamento…'
         $ui.LSub.Text = 'Annullamento dopo l''elemento in corso…'
         return
     }
@@ -5248,6 +5425,20 @@ function Update-StartupTask {
             if (-not $Settings.Tray) { $Settings.Tray = $true; $ui.SetTray.IsChecked = $true; $Tray.Visible = $true; Save-Settings }
         } else { Unregister-ScheduledTask -TaskName $StartTaskName -Confirm:$false -ErrorAction SilentlyContinue }
     } catch { Toast "Avvio con Windows non impostato: $($_.Exception.Message)" }
+}
+function Repair-Tasks {
+    foreach ($d in @(@{ T = $TaskName; F = 'auto.vbs'; A = '-Auto'; W = 'True' }, @{ T = $BkTaskName; F = 'backup.vbs'; A = '-Backup'; W = 'True' }, @{ T = $StartTaskName; F = 'avvio.vbs'; A = '-Hidden'; W = 'False' })) {
+        $t = Get-ScheduledTask -TaskName $d.T -ErrorAction SilentlyContinue
+        if (-not $t) { continue }
+        $vbs = Join-Path $DataDir $d.F
+        $cur = if (Test-Path $vbs) { Get-Content $vbs -Raw } else { '' }
+        $act = @($t.Actions)[0]
+        if ($cur -notlike "*$ScriptPath*" -or $act.Arguments -ne "`"$vbs`"") {
+            @('Set sh = CreateObject("WScript.Shell")', ('sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""' + $ScriptPath + '"" ' + $d.A + '", 0, ' + $d.W)) | Set-Content $vbs -Encoding ASCII
+            Set-ScheduledTask -TaskName $d.T -Action (New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbs`"") | Out-Null
+            Write-ErrLog "Attività '$($d.T)' aggiornata al nuovo percorso"
+        }
+    }
 }
 $ui.SetStartup.IsChecked = [bool]$Settings.StartWithWindows
 $ui.SetStartup.Add_Click({ $Settings.StartWithWindows = [bool]$ui.SetStartup.IsChecked; Save-Settings; Update-StartupTask
@@ -5506,7 +5697,7 @@ $timer.Add_Tick({
         }
         'run' {
             $ui.LFill.Width = $ui.LTrack.ActualWidth * ($sync.Done / [Math]::Max(1, $sync.Total))
-            $ui.LSummary.Text = "$($sync.Done) di $($sync.Total) completati"
+            $ui.LSummary.Text = T "$($sync.Done) di $($sync.Total) completati"
             if (-not $sync.Cancel) { $ui.LSub.Text = $sync.Status }
         }
         'done' {
@@ -5621,12 +5812,17 @@ if ($Settings.BackupDest -and (-not $Settings.LastBackup -or ((Get-Date) - [date
     Toast "L'ultimo backup ha più di 7 giorni: vai nella sezione Backup"
 }
 if ($Settings.SensLog) { Start-Sensors }
+if ([string]$Settings.LastVersion -ne $AppVersion) {
+    if ($Settings.LastVersion) { Toast "MultiTool aggiornato alla versione $AppVersion. Le novità sono in Ctrl+K › Novità" }
+    $Settings | Add-Member -NotePropertyName LastVersion -NotePropertyValue $AppVersion -Force; Save-Settings
+}
+try { Repair-Tasks } catch { Write-ErrLog "Attività: $($_.Exception.Message)" }
 Start-CountCheck
 Start-UpdCheck
 Update-AutoInfo
 if ($Settings.TermsAccepted -ne $TermsVersion) { Show-About $true } else { Show-View 'ViewHome'; Start-Prefetch }
 Refresh-Info
-if ($Hidden -and $Settings.Tray) {
+if ($Hidden -and $Settings.Tray -and $Settings.TermsAccepted -eq $TermsVersion) {
     $win.ShowInTaskbar = $false; $win.WindowState = 'Minimized'
     $win.Add_Loaded({ $win.Hide(); $win.WindowState = 'Normal'; $win.ShowInTaskbar = $true })
 }
