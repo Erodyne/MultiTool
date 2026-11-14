@@ -3,7 +3,7 @@
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.13.7'
+$AppVersion = '2026.11.14.1'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
@@ -2446,6 +2446,8 @@ Assistenza ⇒ Get Help
 capacità {0}% rispetto al nuovo ⇒ capacity {0}% of new
 Le attività pianificate vengono registrate per l'account amministratore {0}, non per {1}: partiranno solo quando {2} ha effettuato l'accesso al PC. ⇒ Scheduled tasks are registered for the administrator account {0}, not for {1}: they will only run while {2} is signed in to the PC.
 Stai usando l'account amministratore {0}: i file finiranno nel suo Cestino, non in quello di {1}. Per recuperarli dovrai accedere con {2}. Continuare? ⇒ You are using the administrator account {0}: files will go to its Recycle Bin, not to {1}'s. To recover them you will need to sign in as {2}. Continue?
+MultiTool resta attivo qui. Doppio clic per riaprirlo, tasto destro › Esci per chiuderlo. ⇒ MultiTool keeps running here. Double-click to reopen it, right-click › Exit to close it.
+la {0} è in preparazione su GitHub, riprovo tra poco ⇒ {0} is being prepared on GitHub, retrying shortly
 '@
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml
 if (-not ('MtTr' -as [type])) {
@@ -2599,15 +2601,18 @@ $ShowEvt = New-Object Threading.EventWaitHandle($false, [Threading.EventResetMod
 $got = $false
 try { $got = $Mutex.WaitOne($(if ($Restart) { 20000 } else { 0 })) } catch [Threading.AbandonedMutexException] { $got = $true }
 if (-not $got) {
+    # un'altra istanza: le chiedo di mostrarsi; se invece si sta chiudendo (riavvio dopo un aggiornamento) aspetto e prendo il suo posto
     [void]$ShowEvt.Set()
-    exit
+    try { $got = $Mutex.WaitOne(12000) } catch [Threading.AbandonedMutexException] { $got = $true }
+    if (-not $got) { exit }
+    [void]$ShowEvt.Reset()
 }
 $WorkMx = New-Object Threading.Mutex($false, 'Global\MultiTool2026.Work')
 $GMutex = $null
 try {
     $GMutex = New-Object Threading.Mutex($false, 'Global\MultiTool2026.Any')
     $g2 = $false
-    try { $g2 = $GMutex.WaitOne($(if ($Restart) { 20000 } else { 0 })) } catch [Threading.AbandonedMutexException] { $g2 = $true }
+    try { $g2 = $GMutex.WaitOne($(if ($Restart) { 20000 } else { 12000 })) } catch [Threading.AbandonedMutexException] { $g2 = $true }
     if (-not $g2) { [void][MtTr]::Msg('MultiTool è già aperto da un altro utente su questo PC. Chiudilo prima di avviarlo qui.', 'MultiTool', 'OK', 'Information'); exit }
 } catch {}
 $Settings = Get-Settings
@@ -6005,7 +6010,11 @@ function Load-Logs {
 $UpdCode = @'
 try {
     $u = $url.TrimEnd('/')
-    $v = (Invoke-WebRequest "$u/version.txt" -UseBasicParsing -TimeoutSec 20).Content.Trim()
+    $v = $null
+    if ($api) {
+        try { $v = ((Invoke-RestMethod $api -UseBasicParsing -TimeoutSec 20 -Headers @{ 'User-Agent' = 'MultiTool' }).tag_name -replace '^v', '').Trim() } catch {}
+    }
+    if (-not $v) { $v = (Invoke-WebRequest "$u/version.txt" -UseBasicParsing -TimeoutSec 20).Content.Trim() }
     $sync.NewVersion = if ([version]$v -gt [version]$cur) { $v } else { '' }
     $sync.UpdChecked = $true
 } catch { $sync.NewVersion = ''; $sync.UpdChecked = $true; $sync.UpdError = $_.Exception.Message }
@@ -6014,11 +6023,13 @@ function Get-UpdUrl { if ($Settings.UpdateUrl) { $Settings.UpdateUrl.TrimEnd('/'
 function Start-UpdCheck {
     $sync.UpdChecked = $false; $sync.UpdError = $null
     $ui.SetUpdInfo.Text = "Versione installata: $AppVersion  ·  controllo in corso…"
-    Start-Bg $UpdCode @{ url = (Get-UpdUrl); cur = $AppVersion }
+    $api = if ((Get-UpdUrl) -eq $DefaultUpdateUrl) { 'https://api.github.com/repos/Erodyne/MultiTool/releases/latest' } else { '' }
+    Start-Bg $UpdCode @{ url = (Get-UpdUrl); cur = $AppVersion; api = $api }
 }
 function Install-SelfUpdate {
     try {
         $u = Get-UpdUrl
+        if ($u -eq $DefaultUpdateUrl -and $sync.NewVersion) { $u = "https://raw.githubusercontent.com/Erodyne/MultiTool/v$($sync.NewVersion)" }
         $tmp = Join-Path $env:TEMP 'MultiTool-new.ps1'
         Invoke-WebRequest "$u/MultiTool.ps1" -OutFile $tmp -UseBasicParsing -TimeoutSec 60
         $errs = $null; $tok = $null
@@ -6026,10 +6037,10 @@ function Install-SelfUpdate {
         if ($errs.Count) { throw 'il file scaricato contiene errori' }
         $want = if ($sync.NewVersion) { [regex]::Escape($sync.NewVersion) } else { '[\d\.]+' }
         if (-not (Select-String -Path $tmp -Pattern "\`$AppVersion = '$want'" -Quiet)) { throw 'il file scaricato non corrisponde alla versione annunciata' }
-        if ($u -eq $DefaultUpdateUrl -and $sync.NewVersion) {
+        if ((Get-UpdUrl) -eq $DefaultUpdateUrl -and $sync.NewVersion) {
             $hs = $null
             try { $hs = ((Invoke-WebRequest "$AppRepo/releases/download/v$($sync.NewVersion)/MultiTool.ps1.sha256" -UseBasicParsing -TimeoutSec 30).Content -split '\s+')[0].Trim() } catch {}
-            if (-not $hs) { $State.SelfUpdRetry = (Get-Date).AddMinutes(20); throw 'la nuova versione non è ancora pubblicata, riprovo tra poco' }
+            if (-not $hs) { $State.SelfUpdRetry = (Get-Date).AddMinutes(3); $ui.SetUpdInfo.Text = "Versione installata: $AppVersion  ·  la $($sync.NewVersion) è in preparazione su GitHub, riprovo tra poco"; throw 'la nuova versione non è ancora pubblicata, riprovo tra poco' }
             if ((Get-FileHash $tmp -Algorithm SHA256).Hash -ne $hs.ToUpper()) { throw 'impronta SHA256 non corrispondente: aggiornamento scartato' }
         }
         foreach ($f in 'MultiTool.ico', 'MultiTool-512.png') {
@@ -6764,7 +6775,7 @@ $timer.Start()
 # ============================================================
 $ui.TitleBar.Add_MouseLeftButtonDown({ param($s, $e) if ($e.ClickCount -eq 2) { $win.WindowState = if ($win.WindowState -eq 'Maximized') { 'Normal' } else { 'Maximized' } } else { $win.DragMove() } })
 $ui.BtnMin.Add_Click({
-    if ($Settings.Tray) { $win.Hide(); if (-not $State.TrayTip) { $State.TrayTip = $true; $State.BalloonMode = $null; $Tray.ShowBalloonTip(4000, 'MultiTool', 'MultiTool resta attivo qui. Doppio clic per riaprirlo.', 'Info') } }
+    if ($Settings.Tray) { Hide-ToTray }
     else { $win.WindowState = 'Minimized' }
 })
 $win.Add_StateChanged({
@@ -6790,9 +6801,15 @@ if ($Settings.WinW -and $Settings.WinH) {
     if ($Settings.WinMax) { $win.WindowState = 'Maximized' }
 }
 $ui.BtnMax.Add_Click({ $win.WindowState = if ($win.WindowState -eq 'Maximized') { 'Normal' } else { 'Maximized' } })
+try { [Microsoft.Win32.SystemEvents]::add_SessionEnding({ $State.ForceClose = $true }) } catch {}
+function Hide-ToTray {
+    $win.Hide()
+    if (-not $State.TrayTip) { $State.TrayTip = $true; $State.BalloonMode = $null; $Tray.ShowBalloonTip(4000, 'MultiTool', (T 'MultiTool resta attivo qui. Doppio clic per riaprirlo, tasto destro › Esci per chiuderlo.'), 'Info') }
+}
 $ui.BtnClose.Add_Click({ $win.Close() })
 $win.Add_Closing({
     param($s, $e)
+    if ($Settings.Tray -and -not $State.ForceClose) { $e.Cancel = $true; Hide-ToTray; return }
     $rb = $win.RestoreBounds
     if (-not $rb.IsEmpty) { $Settings.WinL = $rb.Left; $Settings.WinT = $rb.Top; $Settings.WinW = $rb.Width; $Settings.WinH = $rb.Height }
     $Settings.WinMax = ($win.WindowState -eq 'Maximized')
@@ -6849,6 +6866,12 @@ if ($Settings.BackupDest -and (-not $Settings.LastBackup -or ((Get-Date) - [date
     }
 }
 if ($Settings.SensLog) { Start-Sensors }
+if ([int]$Settings.Mig -lt 2) {
+    $Settings | Add-Member -NotePropertyName Mig -NotePropertyValue 2 -Force
+    $Settings.Tray = $true; $Settings.AutoSelfUpdate = $true; $Tray.Visible = $true
+    $ui.SetTray.IsChecked = $true; $ui.SetSelfUpd.IsChecked = $true
+    Save-Settings
+}
 if (-not $Settings.FirstRun) { $Settings | Add-Member -NotePropertyName FirstRun -NotePropertyValue (Get-Date).ToString('s') -Force; Save-Settings }
 if ([string]$Settings.LastVersion -ne $AppVersion) {
     if ($Settings.LastVersion) { Toast "MultiTool aggiornato alla versione $AppVersion. Le novità sono in Ctrl+K › Novità" }
