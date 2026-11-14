@@ -3,7 +3,7 @@
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.14.3'
+$AppVersion = '2026.11.14.4'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
