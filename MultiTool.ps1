@@ -3,7 +3,7 @@
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.14.1'
+$AppVersion = '2026.11.14.2'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
@@ -6801,7 +6801,6 @@ if ($Settings.WinW -and $Settings.WinH) {
     if ($Settings.WinMax) { $win.WindowState = 'Maximized' }
 }
 $ui.BtnMax.Add_Click({ $win.WindowState = if ($win.WindowState -eq 'Maximized') { 'Normal' } else { 'Maximized' } })
-try { [Microsoft.Win32.SystemEvents]::add_SessionEnding({ $State.ForceClose = $true }) } catch {}
 function Hide-ToTray {
     $win.Hide()
     if (-not $State.TrayTip) { $State.TrayTip = $true; $State.BalloonMode = $null; $Tray.ShowBalloonTip(4000, 'MultiTool', (T 'MultiTool resta attivo qui. Doppio clic per riaprirlo, tasto destro › Esci per chiuderlo.'), 'Info') }
