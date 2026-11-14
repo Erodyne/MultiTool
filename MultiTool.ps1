@@ -3,7 +3,7 @@
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.14.2'
+$AppVersion = '2026.11.14.3'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
@@ -6540,7 +6540,7 @@ $timer.Add_Tick({
     }
 
     # Auto-aggiornamento: applica appena il programma è libero
-    if ($State.PendingSelfUpdate -and (-not $State.SelfUpdRetry -or (Get-Date) -gt $State.SelfUpdRetry) -and $sync.Phase -in 'idle', 'review' -and -not $State.SelfUpdating -and ($ui.ViewHome.Visibility -eq 'Visible' -or -not $win.IsVisible)) {
+    if ($State.PendingSelfUpdate -and (-not $State.SelfUpdRetry -or (Get-Date) -gt $State.SelfUpdRetry) -and $sync.Phase -in 'idle', 'review' -and -not $State.SelfUpdating -and $ui.ViewHome.Visibility -eq 'Visible' -and -not $State.StressUntil) {
         $State.SelfUpdating = $true
         if (-not $State.UpdToastDone) { Toast "Aggiorno MultiTool alla versione $($State.PendingSelfUpdate)…"; $State.UpdToastDone = $true }
         $State.SelfUpdAt = (Get-Date).AddSeconds(3)
@@ -6805,10 +6805,12 @@ function Hide-ToTray {
     $win.Hide()
     if (-not $State.TrayTip) { $State.TrayTip = $true; $State.BalloonMode = $null; $Tray.ShowBalloonTip(4000, 'MultiTool', (T 'MultiTool resta attivo qui. Doppio clic per riaprirlo, tasto destro › Esci per chiuderlo.'), 'Info') }
 }
-$ui.BtnClose.Add_Click({ $win.Close() })
+$ui.BtnClose.Add_Click({ if ($Settings.Tray) { Hide-ToTray } else { $win.Close() } })
+# Errori imprevisti nell'interfaccia: li registro senza chiudere il programma
+$win.Dispatcher.add_UnhandledException({ param($s, $e) try { Write-ErrLog "Interfaccia: $($e.Exception.Message)" } catch {}; $e.Handled = $true })
 $win.Add_Closing({
     param($s, $e)
-    if ($Settings.Tray -and -not $State.ForceClose) { $e.Cancel = $true; Hide-ToTray; return }
+    if ($Settings.Tray -and -not $State.ForceClose) { $e.Cancel = $true; [void]$win.Dispatcher.BeginInvoke([Action]{ Hide-ToTray }); return }
     $rb = $win.RestoreBounds
     if (-not $rb.IsEmpty) { $Settings.WinL = $rb.Left; $Settings.WinT = $rb.Top; $Settings.WinW = $rb.Width; $Settings.WinH = $rb.Height }
     $Settings.WinMax = ($win.WindowState -eq 'Maximized')
