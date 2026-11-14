@@ -3,7 +3,7 @@
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.14.4'
+$AppVersion = '2026.11.14.5'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
@@ -6899,4 +6899,6 @@ if ($Hidden -and $Settings.Tray -and $Settings.TermsAccepted -eq $TermsVersion) 
     $win.ShowInTaskbar = $false; $win.WindowState = 'Minimized'
     $win.Add_Loaded({ $win.Hide(); $win.WindowState = 'Normal'; $win.ShowInTaskbar = $true })
 }
-[void]$win.ShowDialog()
+# Show + ciclo dei messaggi: con ShowDialog, nascondere la finestra nell'area di notifica terminava il programma
+$win.Show()
+[Windows.Threading.Dispatcher]::Run()
