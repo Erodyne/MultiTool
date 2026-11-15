@@ -3,6 +3,9 @@ name: Collaudo
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   collaudo:
     runs-on: windows-latest
@@ -33,7 +36,7 @@ jobs:
           if (-not $p.WaitForExit(100 * 60 * 1000)) { $p.Kill(); "TEMPO SCADUTO" }
           "uscita: $($p.ExitCode)"
           Get-ChildItem $out -ErrorAction SilentlyContinue | Select-Object Name, Length | Format-Table | Out-String | Write-Host
-          if (Test-Path "$out\risultati.json") { (Get-Content "$out\risultati.json" -Raw | ConvertFrom-Json).Steps | Format-Table Step, Result, Seconds, Items, Status -AutoSize | Out-String -Width 300 | Write-Host }
+          if (Test-Path "$out\risultati.json") { foreach ($s in (Get-Content "$out\risultati.json" -Raw | ConvertFrom-Json).Steps) { "### $($s.Step) | $($s.Result) | $($s.Seconds)s | items $($s.Items) | $($s.Status)"; if ($s.Detail) { "    dettaglio: $($s.Detail)" }; if ($s.Error) { "    errore: $($s.Error)" }; if ($s.Info) { "    info: $($s.Info)" } } ; "MESSAGGI:"; (Get-Content "$out\risultati.json" -Raw | ConvertFrom-Json).Messages }
           Get-Content "$out\errori.log" -ErrorAction SilentlyContinue
 
       - name: Collaudo riga di comando (-Pulizia)
@@ -46,8 +49,12 @@ jobs:
           Get-Content "$env:ProgramData\MultiTool\Dati\Logs\errori.log" -ErrorAction SilentlyContinue
           icacls "$env:ProgramData\MultiTool\Dati\settings.json"
 
-      - uses: actions/upload-artifact@v4
+      - name: Pubblica i risultati nel ramo collaudo
         if: always()
-        with:
-          name: collaudo
-          path: ${{ runner.temp }}/collaudo
+        shell: pwsh
+        run: |
+          git config user.name "collaudo"; git config user.email "collaudo@users.noreply.github.com"
+          git checkout --orphan collaudo-risultati
+          git rm -rf . -q
+          Copy-Item "$env:RUNNER_TEMP\collaudo\*" . -Force -ErrorAction SilentlyContinue
+          git add -A; git commit -q -m "Collaudo $env:GITHUB_RUN_ID"; git push -f origin collaudo-risultati
