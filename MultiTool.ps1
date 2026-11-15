@@ -521,7 +521,7 @@ function Remove-Items($Paths, [int]$MinAgeHours = 0) {
         Get-ChildItem $p -Recurse -Force -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt $cut } |
             Remove-Item -Force -ErrorAction SilentlyContinue
         Get-ChildItem $p -Recurse -Force -Directory -ErrorAction SilentlyContinue | Sort-Object { $_.FullName.Length } -Descending |
-            Where-Object { -not (Get-ChildItem $_.FullName -Force -ErrorAction SilentlyContinue) } | Remove-Item -Force -ErrorAction SilentlyContinue
+            Where-Object { $_.LastWriteTime -lt $cut -and $_.CreationTime -lt $cut -and -not (Get-ChildItem $_.FullName -Force -ErrorAction SilentlyContinue) } | Remove-Item -Force -ErrorAction SilentlyContinue
     }
 }
 function Invoke-CleanTarget($t) {
