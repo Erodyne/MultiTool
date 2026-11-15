@@ -6899,7 +6899,7 @@ try {
 } catch {}
 if ($SelfTest) { } elseif (-not (Test-Metered)) { Start-CountCheck; Start-UpdCheck } else { $ui.SetUpdInfo.Text = "Versione installata: $AppVersion  ·  connessione a consumo: controllo rimandato" }
 Update-AutoInfo
-if ($SelfTest) { $Settings.TermsAccepted = $TermsVersion; $Settings.Prefetch = $false; $Settings.BackupDest = Join-Path $env:TEMP 'mt-backup'; New-Item -ItemType Directory $Settings.BackupDest -Force | Out-Null }
+if ($SelfTest) { $Settings.TermsAccepted = $TermsVersion; $Settings.Prefetch = $false; $Settings.BackupDest = Join-Path $env:TEMP 'mt-backup'; New-Item -ItemType Directory $Settings.BackupDest -Force | Out-Null; Save-Settings }
 if ($Settings.TermsAccepted -ne $TermsVersion) { Show-About $true }
 elseif ($Hidden) {
     Show-View 'ViewHome'; $State.DeferPrefetch = $true
@@ -6949,7 +6949,7 @@ if ($SelfTest) {
         $sk = @{}; foreach ($it in $Items) { $sk[[string]$it.StatusKind] = 1 + [int]$sk[[string]$it.StatusKind] }
         [void]$ST.Res.Add([ordered]@{ Step = $step.N; Result = $res; Seconds = [int]((Get-Date) - $ST.Started).TotalSeconds; Items = $Items.Count
             Status = (($sk.Keys | ForEach-Object { "$($_):$($sk[$_])" }) -join ' '); Info = [string]$ui.LSub.Text; Error = [string]$sync.Error; Detail = $det; LastStatus = [string]$sync.Status
-            Toasts = (@($ST.Toasts) -join ' | ') })
+            Toasts = (@($ST.Toasts) -join ' | ') + $(if ($sync.Extra) { " || esito: $($sync.Extra)" } else { '' }) })
         $ST.Toasts = @()
     }
     $plan = New-Object System.Collections.ArrayList
