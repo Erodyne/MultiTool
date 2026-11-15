@@ -142,7 +142,7 @@ function Get-InstalledNames {
     @(Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } | ForEach-Object { [string]$_.DisplayName }) + @(Get-UserAppx | ForEach-Object { [string]$_.Name })
 }
 function ConvertFrom-WingetTable([string]$Text, [switch]$FirstOnly) {
-    $lines = $Text -split "`n" | ForEach-Object { ($_ -split "`r")[-1].TrimEnd() }
+    $lines = $Text -split "`n" | ForEach-Object { ($_.TrimEnd("`r") -split "`r")[-1].TrimEnd() }
     if ($FirstOnly) {
         $stop = -1; $seen = $false
         for ($q = 0; $q -lt $lines.Count; $q++) { if ($lines[$q] -match '^-{20,}$') { if ($seen) { $stop = $q - 2; break }; $seen = $true } }
