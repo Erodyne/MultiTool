@@ -5440,10 +5440,10 @@ function Stop-AnyScan {
     $sync.Phase = 'idle'
 }
 
-function Open-Mode([string]$m, [hashtable]$Vars) {
+function Open-Mode([string]$Mode, [hashtable]$Vars) {
     Stop-AnyScan
-    $State.Mode = $m; $State.Vars = $Vars
-    $M = $Modes[$m]
+    $State.Mode = $Mode; $State.Vars = $Vars
+    $M = $Modes[$Mode]
     $Items.Clear()
     $ui.LTitle.Text = $M.Title; $ui.LSub.Text = $M.Sub; $ui.LSummary.Text = ''
     $ui.LH1.Text = $M.H[0]; $ui.LH2.Text = $M.H[1]; $ui.LH3.Text = $M.H[2]; $ui.LH4.Text = $M.H[3]
@@ -5475,8 +5475,8 @@ function Open-Mode([string]$m, [hashtable]$Vars) {
         $sync.Phase = 'review'; Show-Empty $M.Empty
         $ui.LSearch.Text = ''; [void]$ui.LSearch.Focus()
     } else {
-        $c = $sync.Cache[$m]
-        if ($c -and -not $Vars -and -not $c.Error -and ((Get-Date) - $c.Time).TotalMinutes -lt 20) { Use-Cache $m $c } else { Start-Scan }
+        $c = $sync.Cache[$Mode]
+        if ($c -and -not $Vars -and -not $c.Error -and ((Get-Date) - $c.Time).TotalMinutes -lt 20) { Use-Cache $Mode $c } else { Start-Scan }
     }
 }
 
@@ -6932,11 +6932,13 @@ if ($SelfTest) {
             $b = $ui[$k]
             if ($b -isnot [Windows.Controls.Primitives.ButtonBase] -or -not $b.IsVisible) { continue }
             if (-not $b.IsEnabled -or -not $b.IsHitTestVisible) { $bad += "$k disabilitato"; continue }
+            $b.BringIntoView(); $win.UpdateLayout()
             $pt = $b.TranslatePoint((New-Object Windows.Point(($b.ActualWidth / 2), ($b.ActualHeight / 2))), $win)
+            if ($pt.Y -lt 0 -or $pt.Y -gt $win.ActualHeight -or $pt.X -gt $win.ActualWidth) { continue }
             $hit = [Windows.Media.VisualTreeHelper]::HitTest($win, $pt)
-            $v = if ($hit) { $hit.VisualHit } else { $null }; $ok = $false
-            while ($v) { if ([object]::ReferenceEquals($v, $b)) { $ok = $true; break }; $v = [Windows.Media.VisualTreeHelper]::GetParent($v) }
-            if (-not $ok) { $bad += "$k coperto da $(if ($hit) { $hit.VisualHit.GetType().Name } else { 'niente' })" }
+            $v = if ($hit) { $hit.VisualHit } else { $null }; $ok = $false; $chain = @()
+            while ($v) { if ([object]::ReferenceEquals($v, $b)) { $ok = $true; break }; if ($v.Name) { $chain += $v.Name }; $v = [Windows.Media.VisualTreeHelper]::GetParent($v) }
+            if (-not $ok) { $bad += "$k coperto da $(if ($hit) { $hit.VisualHit.GetType().Name } else { 'niente' }) [$($chain -join '<')] in $([int]$pt.X),$([int]$pt.Y)" }
         }
         $bad
     }
