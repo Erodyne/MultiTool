@@ -3969,6 +3969,7 @@ function G([int]$c) { [string][char]$c }
 function Vis($b) { if ($b) { 'Visible' } else { 'Collapsed' } }
 function Toast([string]$t) {
     $t = T $t
+    if ($SelfTest -and $ST) { $ST.Toasts += $t }
     if ($State.Q.Contains($t)) { return }
     while ($State.Q.Count -ge 5) { $State.Q.RemoveAt(0) }
     [void]$State.Q.Add($t)
@@ -6915,7 +6916,7 @@ if ($Hidden -and $Settings.Tray -and $Settings.TermsAccepted -eq $TermsVersion) 
 if ($SelfTest) {
     [MtTr]::AutoAnswer = 'Yes'
     New-Item -ItemType Directory $SelfTest -Force | Out-Null
-    $ST = @{ I = 0; Started = $null; Phase = 0; Res = (New-Object System.Collections.ArrayList); Seen = $false; T0 = Get-Date }
+    $ST = @{ Toasts = @(); I = 0; Started = $null; Phase = 0; Res = (New-Object System.Collections.ArrayList); Seen = $false; T0 = Get-Date }
     function ST-Snap([string]$n) {
         try {
             $win.UpdateLayout()
@@ -6946,7 +6947,9 @@ if ($SelfTest) {
     function ST-Add($step, [string]$res, [string]$det) {
         $sk = @{}; foreach ($it in $Items) { $sk[[string]$it.StatusKind] = 1 + [int]$sk[[string]$it.StatusKind] }
         [void]$ST.Res.Add([ordered]@{ Step = $step.N; Result = $res; Seconds = [int]((Get-Date) - $ST.Started).TotalSeconds; Items = $Items.Count
-            Status = (($sk.Keys | ForEach-Object { "$($_):$($sk[$_])" }) -join ' '); Info = [string]$ui.LSub.Text; Error = [string]$sync.Error; Detail = $det; LastStatus = [string]$sync.Status })
+            Status = (($sk.Keys | ForEach-Object { "$($_):$($sk[$_])" }) -join ' '); Info = [string]$ui.LSub.Text; Error = [string]$sync.Error; Detail = $det; LastStatus = [string]$sync.Status
+            Toasts = (@($ST.Toasts) -join ' | ') })
+        $ST.Toasts = @()
     }
     $plan = New-Object System.Collections.ArrayList
     foreach ($x in @(
@@ -7028,7 +7031,7 @@ if ($SelfTest) {
                         if ($sync.Phase -eq 'run') { $ST.Phase = 2 }
                         elseif ($el -ge 5) { ST-Add $step 'NON-AVVIATA' "fase=$($sync.Phase)"; & $next }
                     } else {
-                        if ($sync.Phase -ne 'run' -and $sync.Phase -ne 'done') { ST-Add $step $(if (@($Items | Where-Object { $_.StatusKind -eq 'err' }).Count) { 'con-errori' } else { 'ok' }) ((@($Items | Where-Object { $_.StatusKind -in 'err', 'skip' } | ForEach-Object { "$($_.Name) = $($_.Status)" }) | Select-Object -First 15) -join ' | '); & $next }
+                        if ($sync.Phase -in 'review', 'idle') { ST-Add $step $(if (@($Items | Where-Object { $_.StatusKind -eq 'err' }).Count) { 'con-errori' } else { 'ok' }) ((@($Items | Where-Object { $_.StatusKind -in 'err', 'skip' } | ForEach-Object { "$($_.Name) = $($_.Status)" }) | Select-Object -First 15) -join ' | '); & $next }
                         elseif ($el -ge $lim) { ST-Add $step 'BLOCCATA' "fase=$($sync.Phase) stato=$($sync.Status) elementi: $((@($Items | ForEach-Object { "$($_.Name)=$($_.Status)" }) | Select-Object -First 20) -join ' | ')"; & $next }
                     }
                 }
