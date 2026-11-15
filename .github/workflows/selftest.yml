@@ -1,0 +1,53 @@
+name: Collaudo
+
+on:
+  workflow_dispatch:
+
+jobs:
+  collaudo:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installa come in un PC (Program Files + ProgramData)
+        shell: pwsh
+        run: |
+          $dst = "$env:ProgramFiles\MultiTool"
+          New-Item -ItemType Directory $dst -Force | Out-Null
+          Copy-Item MultiTool.ps1, MultiTool.ico, MultiTool-512.png, Avvia.vbs $dst -Force
+          Copy-Item Strumenti $dst -Recurse -Force
+          New-Item -ItemType Directory "$env:ProgramData\MultiTool\Profili" -Force | Out-Null
+          Copy-Item Profili\* "$env:ProgramData\MultiTool\Profili" -Force
+          # simula la cartella dati rovinata dalla versione precedente (file senza permessi)
+          New-Item -ItemType Directory "$env:ProgramData\MultiTool\Dati" -Force | Out-Null
+          '{"TermsAccepted":"1","Lang":"it"}' | Set-Content "$env:ProgramData\MultiTool\Dati\settings.json"
+          icacls "$env:ProgramData\MultiTool" /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX" /T /C /Q
+          winget --version 2>$null; "winget exit $LASTEXITCODE"
+
+      - name: Collaudo dell'interfaccia (tutte le sezioni e le azioni)
+        shell: pwsh
+        run: |
+          $out = "$env:RUNNER_TEMP\collaudo"
+          $p = Start-Process "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$env:ProgramFiles\MultiTool\MultiTool.ps1`" -SelfTest `"$out`"" -PassThru
+          if (-not $p.WaitForExit(100 * 60 * 1000)) { $p.Kill(); "TEMPO SCADUTO" }
+          "uscita: $($p.ExitCode)"
+          Get-ChildItem $out -ErrorAction SilentlyContinue | Select-Object Name, Length | Format-Table | Out-String | Write-Host
+          if (Test-Path "$out\risultati.json") { (Get-Content "$out\risultati.json" -Raw | ConvertFrom-Json).Steps | Format-Table Step, Result, Seconds, Items, Status -AutoSize | Out-String -Width 300 | Write-Host }
+          Get-Content "$out\errori.log" -ErrorAction SilentlyContinue
+
+      - name: Collaudo riga di comando (-Pulizia)
+        shell: pwsh
+        run: |
+          $p = Start-Process "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$env:ProgramFiles\MultiTool\MultiTool.ps1`" -Pulizia" -PassThru
+          if (-not $p.WaitForExit(20 * 60 * 1000)) { $p.Kill(); "TEMPO SCADUTO" }
+          "uscita: $($p.ExitCode)"
+          Get-Content "$env:ProgramData\MultiTool\Dati\history.jsonl" -Tail 30 -ErrorAction SilentlyContinue
+          Get-Content "$env:ProgramData\MultiTool\Dati\Logs\errori.log" -ErrorAction SilentlyContinue
+          icacls "$env:ProgramData\MultiTool\Dati\settings.json"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: collaudo
+          path: ${{ runner.temp }}/collaudo

@@ -1,9 +1,9 @@
-﻿param([switch]$Auto, [switch]$Backup, [switch]$Uninstall, [switch]$Hidden, [switch]$Restart, [switch]$Pulizia, [switch]$Aggiorna, [switch]$Manutenzione, [switch]$Logon)
+﻿param([switch]$Auto, [switch]$Backup, [switch]$Uninstall, [switch]$Hidden, [switch]$Restart, [switch]$Pulizia, [switch]$Aggiorna, [switch]$Manutenzione, [switch]$Logon, [string]$SelfTest)
 # ============================================================
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.14.5'
+$AppVersion = '2026.11.15.1'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
@@ -49,6 +49,20 @@ function Get-WingetPath {
     throw 'winget non trovato. Installa "Programma di installazione app" dal Microsoft Store.'
 }
 
+function Repair-DataAcl {
+    # v1 aveva tolto ai file ogni permesso: ripristino cartella (admin e SYSTEM completi, utenti lettura) e faccio ereditare tutto
+    if (-not $Installed -or (Test-Path (Join-Path $Base '.acl2'))) { return }
+    try {
+        $ic = "$env:SystemRoot\System32\icacls.exe"
+        [void](Invoke-Hidden $ic "`"$Base`" /setowner *S-1-5-32-544 /T /C /Q" 300)
+        [void](Invoke-Hidden $ic "`"$Base`" /reset /T /C /Q" 300)
+        [void](Invoke-Hidden $ic "`"$Base`" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX /C /Q" 60)
+        $r = Invoke-Hidden $ic "`"$Base\*`" /reset /T /C /Q" 300
+        Get-ChildItem $DataDir -Filter '*.tmp' -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+        if (Test-Path (Join-Path $DataDir 'settings.json')) { [void](Get-Content (Join-Path $DataDir 'settings.json') -Raw -ErrorAction Stop) }
+        Set-Content (Join-Path $Base '.acl2') (Get-Date).ToString('s') -ErrorAction Stop
+    } catch { try { Write-ErrLog "Permessi cartella dati: $($_.Exception.Message)" } catch {} }
+}
 function Get-OemEncoding { [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) }
 function Invoke-Hidden([string]$File, [string]$Arguments, [int]$TimeoutSec = 0, [Text.Encoding]$Enc) {
     if (-not $Enc) { $Enc = if ([IO.Path]::GetFileName($File) -match '^(netsh|robocopy|vssadmin|powercfg|ipconfig|reg|icacls|pnputil)\.exe$') { Get-OemEncoding } else { [Text.Encoding]::UTF8 } }
@@ -236,7 +250,8 @@ function Save-Json([string]$Name, $Obj) {
     $p = Join-Path $DataDir $Name; $tmp = "$p.tmp"
     ConvertTo-Json -InputObject $Obj -Depth 5 | Set-Content $tmp -Encoding UTF8 -ErrorAction Stop
     if (Test-Path $p) { Copy-Item $p "$p.bak" -Force -ErrorAction SilentlyContinue }
-    Move-Item $tmp $p -Force
+    Copy-Item $tmp $p -Force -ErrorAction Stop
+    Remove-Item $tmp -Force -ErrorAction SilentlyContinue
 }
 function Read-Exclusions { @(@(Read-Json 'exclusions.json' @()) | Where-Object { $_ }) }
 function Test-SkippedVer($c) { if (-not $script:skv) { $script:skv = Read-Json 'skipped.json' ([pscustomobject]@{}) }; $v = $script:skv.($c[1]); [bool]($v -and $v -eq $c[3]) }
@@ -526,9 +541,7 @@ function Invoke-CleanTarget($t) {
             for ($k = 1; $k -lt $n; $k++) { [void](Invoke-Hidden "$env:SystemRoot\System32\vssadmin.exe" "delete shadows /for=$env:SystemDrive /oldest /quiet" 120) }
         }
         'recycle' {
-            $up = @(Get-UserRecyclePaths)
-            if ($up.Count) { foreach ($p in $up) { Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'desktop.ini' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } }
-            else { Clear-RecycleBin -Force -ErrorAction SilentlyContinue }
+            foreach ($p in @(Get-UserRecyclePaths)) { Get-ChildItem -LiteralPath $p -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'desktop.ini' } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue }
         }
         'wu' {
             Stop-Service wuauserv, bits -Force -ErrorAction SilentlyContinue
@@ -560,15 +573,13 @@ function Get-TargetSize($t) {
 }
 function Get-UserRecyclePaths {
     $u = Get-UserCtx
-    if (-not $u.Other -or -not $u.Sid) { return @() }
-    @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction SilentlyContinue | ForEach-Object { "$($_.DeviceID)\`$Recycle.Bin\$($u.Sid)" } | Where-Object { Test-Path -LiteralPath $_ })
+    $sid = if ($u.Other -and $u.Sid) { $u.Sid } else { [Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
+    @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction SilentlyContinue | ForEach-Object { "$($_.DeviceID)\`$Recycle.Bin\$sid" } | Where-Object { Test-Path -LiteralPath $_ })
 }
 function Get-RecycleSize {
     $s = 0
-    $up = @(Get-UserRecyclePaths)
-    if ($up.Count) { foreach ($p in $up) { $s += (Get-ChildItem -LiteralPath $p -Recurse -Force -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'desktop.ini' } | Measure-Object Length -Sum).Sum }; return [double]$s }
-    try { foreach ($i in (New-Object -ComObject Shell.Application).Namespace(10).Items()) { $s += [double]$i.ExtendedProperty('Size') } } catch {}
-    $s
+    foreach ($p in @(Get-UserRecyclePaths)) { $s += (Get-ChildItem -LiteralPath $p -Recurse -Force -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'desktop.ini' } | Measure-Object Length -Sum).Sum }
+    [double]$s
 }
 function Get-CleanTargets {
     $U = Get-UserCtx
@@ -1272,6 +1283,7 @@ function Show-Toast([string]$Title, [string]$Text) {
 '@
 
 . ([scriptblock]::Create($Helpers))
+if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Repair-DataAcl }
 
 # ============================================================
 #  Traduzione (italiano -> inglese) e tipi condivisi
@@ -1345,10 +1357,13 @@ public static class MtTr {
         foreach (var x in Fr) f = f.Replace(x.Key, x.Value);
         return f;
     }
-    public static MessageBoxResult Msg(string t) { return MessageBox.Show(T(t)); }
-    public static MessageBoxResult Msg(string t, string c) { return MessageBox.Show(T(t), c); }
-    public static MessageBoxResult Msg(string t, string c, MessageBoxButton b) { return MessageBox.Show(T(t), c, b); }
-    public static MessageBoxResult Msg(string t, string c, MessageBoxButton b, MessageBoxImage i) { return MessageBox.Show(T(t), c, b, i); }
+    public static string AutoAnswer = null;
+    public static System.Collections.Generic.List<string> AutoLog = new System.Collections.Generic.List<string>();
+    static MessageBoxResult Auto(string t) { AutoLog.Add(t); return (MessageBoxResult)Enum.Parse(typeof(MessageBoxResult), AutoAnswer); }
+    public static MessageBoxResult Msg(string t) { if (AutoAnswer != null) return Auto(t); return MessageBox.Show(T(t)); }
+    public static MessageBoxResult Msg(string t, string c) { if (AutoAnswer != null) return Auto(t); return MessageBox.Show(T(t), c); }
+    public static MessageBoxResult Msg(string t, string c, MessageBoxButton b) { if (AutoAnswer != null) return Auto(t); return MessageBox.Show(T(t), c, b); }
+    public static MessageBoxResult Msg(string t, string c, MessageBoxButton b, MessageBoxImage i) { if (AutoAnswer != null) return Auto(t); return MessageBox.Show(T(t), c, b, i); }
 }
 
 public class MtItem : INotifyPropertyChanged {
@@ -6827,13 +6842,6 @@ $ui.HHello.Text = $(if ($Settings.Lang -eq 'en') { if ($h -lt 12) { 'Good mornin
 
 # --- Controlli all'avvio ---
 try { Get-ChildItem $Root -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue } catch {}
-if ($Installed -and $Settings.AclVer -ne 1) {
-    try {
-        $r = Invoke-Hidden "$env:SystemRoot\System32\icacls.exe" "`"$Base`" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX /T /C /Q" 120
-        Get-ChildItem $Base -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { try { $a = $_.GetAccessControl(); $a.SetOwner([Security.Principal.SecurityIdentifier]'S-1-5-32-544'); $_.SetAccessControl($a) } catch {} }
-        if ($r.Code -eq 0) { $Settings | Add-Member -NotePropertyName AclVer -NotePropertyValue 1 -Force; Save-Settings }
-    } catch { Write-ErrLog "Permessi cartella dati: $($_.Exception.Message)" }
-}
 try {
     $hp = Join-Path $DataDir 'history.jsonl'
     if ((Test-Path $hp) -and (Get-Item $hp).Length -gt 1MB) { $keep = Get-Content $hp -Tail 2000 -Encoding UTF8; $keep | Set-Content $hp -Encoding UTF8 }
@@ -6886,8 +6894,9 @@ try {
         if ($me.TimeCreated -gt (Get-Date).AddDays(-2)) { Toast $(if ($me.Id -in 1101, 1201) { 'Test della memoria: nessun errore' } else { 'Test della memoria: rilevati ERRORI nella RAM' }) }
     }
 } catch {}
-if (-not (Test-Metered)) { Start-CountCheck; Start-UpdCheck } else { $ui.SetUpdInfo.Text = "Versione installata: $AppVersion  ·  connessione a consumo: controllo rimandato" }
+if ($SelfTest) { } elseif (-not (Test-Metered)) { Start-CountCheck; Start-UpdCheck } else { $ui.SetUpdInfo.Text = "Versione installata: $AppVersion  ·  connessione a consumo: controllo rimandato" }
 Update-AutoInfo
+if ($SelfTest) { $Settings.TermsAccepted = $TermsVersion; $Settings.Prefetch = $false }
 if ($Settings.TermsAccepted -ne $TermsVersion) { Show-About $true }
 elseif ($Hidden) {
     Show-View 'ViewHome'; $State.DeferPrefetch = $true
@@ -6899,6 +6908,131 @@ if ($Hidden -and $Settings.Tray -and $Settings.TermsAccepted -eq $TermsVersion) 
     $win.ShowInTaskbar = $false; $win.WindowState = 'Minimized'
     $win.Add_Loaded({ $win.Hide(); $win.WindowState = 'Normal'; $win.ShowInTaskbar = $true })
 }
+# ============================================================
+#  COLLAUDO AUTOMATICO (-SelfTest <cartella>): usato dalla CI
+# ============================================================
+if ($SelfTest) {
+    [MtTr]::AutoAnswer = 'Yes'
+    New-Item -ItemType Directory $SelfTest -Force | Out-Null
+    $ST = @{ I = 0; Started = $null; Phase = 0; Res = (New-Object System.Collections.ArrayList); Seen = $false; T0 = Get-Date }
+    function ST-Snap([string]$n) {
+        try {
+            $win.UpdateLayout()
+            $w = [int][math]::Max(200, $win.ActualWidth); $h = [int][math]::Max(200, $win.ActualHeight)
+            $bmp = New-Object Windows.Media.Imaging.RenderTargetBitmap($w, $h, 96, 96, [Windows.Media.PixelFormats]::Pbgra32)
+            $bmp.Render($win)
+            $enc = New-Object Windows.Media.Imaging.PngBitmapEncoder
+            $enc.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bmp))
+            $fs = [IO.File]::Create((Join-Path $SelfTest ("{0:00}-{1}.png" -f $ST.I, $n))); $enc.Save($fs); $fs.Close()
+        } catch {}
+    }
+    function ST-HitNav {
+        $bad = @()
+        foreach ($k in @($ui.Keys | Where-Object { $_ -like 'Nav*' })) {
+            $b = $ui[$k]
+            if ($b -isnot [Windows.Controls.Primitives.ButtonBase] -or -not $b.IsVisible) { continue }
+            if (-not $b.IsEnabled -or -not $b.IsHitTestVisible) { $bad += "$k disabilitato"; continue }
+            $pt = $b.TranslatePoint((New-Object Windows.Point(($b.ActualWidth / 2), ($b.ActualHeight / 2))), $win)
+            $hit = [Windows.Media.VisualTreeHelper]::HitTest($win, $pt)
+            $v = if ($hit) { $hit.VisualHit } else { $null }; $ok = $false
+            while ($v) { if ([object]::ReferenceEquals($v, $b)) { $ok = $true; break }; $v = [Windows.Media.VisualTreeHelper]::GetParent($v) }
+            if (-not $ok) { $bad += "$k coperto da $(if ($hit) { $hit.VisualHit.GetType().Name } else { 'niente' })" }
+        }
+        $bad
+    }
+    function ST-Add($step, [string]$res, [string]$det) {
+        $sk = @{}; foreach ($it in $Items) { $sk[[string]$it.StatusKind] = 1 + [int]$sk[[string]$it.StatusKind] }
+        [void]$ST.Res.Add([ordered]@{ Step = $step.N; Result = $res; Seconds = [int]((Get-Date) - $ST.Started).TotalSeconds; Items = $Items.Count
+            Status = (($sk.Keys | ForEach-Object { "$($_):$($sk[$_])" }) -join ' '); Info = [string]$ui.LSub.Text; Error = [string]$sync.Error; Detail = $det; LastStatus = [string]$sync.Status })
+    }
+    $plan = New-Object System.Collections.ArrayList
+    foreach ($x in @(
+        @{ N = 'avvio-home'; K = 'home' }
+        @{ N = 'menu-cliccabili'; K = 'hit' }
+        @{ N = 'clic-nav-pulizia'; K = 'click'; B = 'NavCleanup'; M = 'cleanup' }
+        @{ N = 'hardware'; K = 'hw'; T = 180 }
+        @{ N = 'full'; K = 'mode'; M = 'full' }, @{ N = 'deliver'; K = 'mode'; M = 'deliver' }, @{ N = 'updates'; K = 'mode'; M = 'updates'; T = 400 }
+        @{ N = 'installers'; K = 'mode'; M = 'installers' }, @{ N = 'catalog'; K = 'mode'; M = 'catalog'; V = @{ query = 'vlc' }; T = 300 }
+        @{ N = 'packs'; K = 'mode'; M = 'packs'; T = 300 }, @{ N = 'profiles'; K = 'mode'; M = 'profiles' }, @{ N = 'uninstall'; K = 'mode'; M = 'uninstall' }
+        @{ N = 'backup'; K = 'mode'; M = 'backup' }, @{ N = 'wu'; K = 'mode'; M = 'wu'; T = 600 }, @{ N = 'drivers'; K = 'mode'; M = 'drivers' }
+        @{ N = 'startup'; K = 'mode'; M = 'startup' }, @{ N = 'services'; K = 'mode'; M = 'services' }, @{ N = 'processes'; K = 'mode'; M = 'processes' }
+        @{ N = 'cleanup'; K = 'mode'; M = 'cleanup' }, @{ N = 'bigfiles'; K = 'mode'; M = 'bigfiles'; T = 600 }, @{ N = 'space'; K = 'mode'; M = 'space'; V = @{ path = "$env:SystemRoot\Temp" } }
+        @{ N = 'repair'; K = 'mode'; M = 'repair' }, @{ N = 'events'; K = 'mode'; M = 'events' }, @{ N = 'privacy'; K = 'mode'; M = 'privacy' }
+        @{ N = 'security'; K = 'mode'; M = 'security' }, @{ N = 'network'; K = 'mode'; M = 'network' }, @{ N = 'lan'; K = 'mode'; M = 'lan' }
+        @{ N = 'bench'; K = 'mode'; M = 'bench' }, @{ N = 'restore'; K = 'mode'; M = 'restore' }, @{ N = 'history'; K = 'mode'; M = 'history' }, @{ N = 'leftovers'; K = 'mode'; M = 'leftovers' }
+        @{ N = 'azione-pulizia'; K = 'act'; M = 'cleanup'; Op = 'go'; T = 900 }
+        @{ N = 'azione-privacy'; K = 'act'; M = 'privacy'; Op = 'apply'; T = 600 }
+        @{ N = 'azione-servizi-manuale'; K = 'act'; M = 'services'; Op = 'manual'; T = 300; One = $true }
+        @{ N = 'azione-servizi-ripristina'; K = 'act'; M = 'services'; Op = 'restore'; T = 300; One = $true }
+        @{ N = 'azione-avvio-disattiva'; K = 'act'; M = 'startup'; Op = 'disable'; T = 300; One = $true }
+        @{ N = 'azione-sicurezza'; K = 'act'; M = 'security'; Op = 'go'; T = 900 }
+        @{ N = 'azione-rete-velocita'; K = 'act'; M = 'network'; Op = 'speed'; T = 300 }
+        @{ N = 'azione-punto-ripristino'; K = 'act'; M = 'restore'; Op = 'create'; T = 300 }
+        @{ N = 'menu-dopo-azioni'; K = 'hit' }
+        @{ N = 'nascondi-in-area-notifica'; K = 'tray' }
+        @{ N = 'menu-finale'; K = 'hit' }
+    )) { [void]$plan.Add($x) }
+    $stTimer = New-Object Windows.Threading.DispatcherTimer
+    $stTimer.Interval = [TimeSpan]::FromMilliseconds(500)
+    $stTimer.Add_Tick({
+        try {
+            if ($ST.I -ge $plan.Count) {
+                $stTimer.Stop()
+                $out = @{ Version = $AppVersion; Steps = $ST.Res; Messages = @([MtTr]::AutoLog); Minutes = [int]((Get-Date) - $ST.T0).TotalMinutes }
+                ConvertTo-Json $out -Depth 5 | Set-Content (Join-Path $SelfTest 'risultati.json') -Encoding UTF8
+                Get-ChildItem (Join-Path $DataDir 'Logs') -File -ErrorAction SilentlyContinue | Copy-Item -Destination $SelfTest -Force
+                Copy-Item (Join-Path $DataDir 'history.jsonl') $SelfTest -Force -ErrorAction SilentlyContinue
+                $State.ForceClose = $true; $win.Close(); return
+            }
+            $step = $plan[$ST.I]; $lim = if ($step.T) { $step.T } else { 240 }
+            if (-not $ST.Started) {
+                $ST.Started = Get-Date; $ST.Phase = 0; $sync.Error = $null
+                switch ($step.K) {
+                    'home'  { Go-Home }
+                    'hw'    { Open-Hw }
+                    'mode'  { Open-Mode $step.M $step.V }
+                    'act'   { Open-Mode $step.M $step.V }
+                    'click' { $b = $ui[$step.B]; $b.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $b))); if ($b -is [Windows.Controls.RadioButton]) { $b.IsChecked = $true } }
+                    'tray'  { Hide-ToTray }
+                }
+                return
+            }
+            $el = ((Get-Date) - $ST.Started).TotalSeconds
+            $next = { ST-Snap $step.N; $ST.I++; $ST.Started = $null }
+            switch ($step.K) {
+                'home' { if ($el -ge 3) { ST-Add $step 'ok' ''; & $next } }
+                'hit'  { if ($el -ge 1) { $b = @(ST-HitNav); ST-Add $step $(if ($b.Count) { 'ERRORE' } else { 'ok' }) ($b -join '; '); & $next } }
+                'click' { if ($el -ge 2) { ST-Add $step $(if ($State.Mode -eq $step.M -and $ui.ViewList.Visibility -eq 'Visible') { 'ok' } else { 'ERRORE' }) "mode=$($State.Mode)"; & $next } }
+                'tray' {
+                    if ($el -ge 4 -and $ST.Phase -eq 0) { $ST.Seen = $win.IsVisible; Show-Main; $ST.Phase = 1 }
+                    elseif ($el -ge 6 -and $ST.Phase -eq 1) { ST-Add $step $(if (-not $ST.Seen -and $win.IsVisible) { 'ok' } else { 'ERRORE' }) "nascosta=$(-not $ST.Seen) riaperta=$($win.IsVisible)"; & $next }
+                }
+                'hw' { if ($ui.HwStatus.Visibility -ne 'Visible' -and $el -ge 5 -or $el -ge $lim) { ST-Add $step $(if ($el -ge $lim) { 'TIMEOUT' } else { 'ok' }) ([string]$sync.HwStatus); & $next } }
+                'mode' {
+                    if ($sync.Phase -in 'review', 'idle' -and $el -ge 1.5) { ST-Add $step $(if ($sync.Error) { 'ERRORE' } else { 'ok' }) ''; & $next }
+                    elseif ($el -ge $lim) { ST-Add $step 'TIMEOUT' "fase=$($sync.Phase)"; & $next }
+                }
+                'act' {
+                    if ($ST.Phase -eq 0) {
+                        if ($sync.Phase -in 'review', 'idle' -and $el -ge 1.5) {
+                            $sel = @($Items | Where-Object { $_.Checkable })
+                            if ($step.One) { foreach ($x in $Items) { $x.Selected = $false }; if ($sel.Count) { $sel[0].Selected = $true } }
+                            if (-not @($Items | Where-Object { $_.Selected }).Count -and $sel.Count -and -not $step.One) { $sel[0].Selected = $true }
+                            $ST.Phase = 1; $ST.Started = Get-Date; Start-Action $step.Op
+                        } elseif ($el -ge $lim) { ST-Add $step 'TIMEOUT-ANALISI' "fase=$($sync.Phase)"; & $next }
+                    } elseif ($ST.Phase -eq 1) {
+                        if ($sync.Phase -eq 'run') { $ST.Phase = 2 }
+                        elseif ($el -ge 5) { ST-Add $step 'NON-AVVIATA' "fase=$($sync.Phase)"; & $next }
+                    } else {
+                        if ($sync.Phase -ne 'run' -and $sync.Phase -ne 'done') { ST-Add $step $(if (@($Items | Where-Object { $_.StatusKind -eq 'err' }).Count) { 'con-errori' } else { 'ok' }) ((@($Items | Where-Object { $_.StatusKind -in 'err', 'skip' } | ForEach-Object { "$($_.Name) = $($_.Status)" }) | Select-Object -First 15) -join ' | '); & $next }
+                        elseif ($el -ge $lim) { ST-Add $step 'BLOCCATA' "fase=$($sync.Phase) stato=$($sync.Status) elementi: $((@($Items | ForEach-Object { "$($_.Name)=$($_.Status)" }) | Select-Object -First 20) -join ' | ')"; & $next }
+                    }
+                }
+            }
+        } catch { [void]$ST.Res.Add(@{ Step = "eccezione-collaudo"; Result = 'ERRORE'; Detail = $_.Exception.Message }); $ST.I++; $ST.Started = $null }
+    })
+}
+if ($SelfTest) { $win.Add_ContentRendered({ $stTimer.Start() }) }
 # Show + ciclo dei messaggi: con ShowDialog, nascondere la finestra nell'area di notifica terminava il programma
 $win.Show()
 [Windows.Threading.Dispatcher]::Run()
