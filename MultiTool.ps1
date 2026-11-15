@@ -6899,7 +6899,7 @@ try {
 } catch {}
 if ($SelfTest) { } elseif (-not (Test-Metered)) { Start-CountCheck; Start-UpdCheck } else { $ui.SetUpdInfo.Text = "Versione installata: $AppVersion  ·  connessione a consumo: controllo rimandato" }
 Update-AutoInfo
-if ($SelfTest) { $Settings.TermsAccepted = $TermsVersion; $Settings.Prefetch = $false; $Settings.BackupDest = Join-Path $env:TEMP 'mt-backup'; New-Item -ItemType Directory $Settings.BackupDest -Force | Out-Null; Save-Settings }
+if ($SelfTest) { $Settings.TermsAccepted = $TermsVersion; $Settings.Prefetch = $false; $Settings.BackupDest = Join-Path $env:SystemDrive 'mt-backup-collaudo'; New-Item -ItemType Directory $Settings.BackupDest -Force | Out-Null; Save-Settings }
 if ($Settings.TermsAccepted -ne $TermsVersion) { Show-About $true }
 elseif ($Hidden) {
     Show-View 'ViewHome'; $State.DeferPrefetch = $true
@@ -7029,7 +7029,6 @@ if ($SelfTest) {
                             $sel = @($Items | Where-Object { $_.Checkable })
                             if ($step.One) { foreach ($x in $Items) { $x.Selected = $false }; if ($sel.Count) { $sel[0].Selected = $true } }
                             if (-not @($Items | Where-Object { $_.Selected }).Count -and $sel.Count -and -not $step.One) { $sel[0].Selected = $true }
-                            if ($step.M -eq 'backup') { $gs = Get-Settings; $ST.Toasts += "debug: mem=$($Settings.BackupDest) disco=$($gs.BackupDest) esiste=$(Test-Path ([string]$gs.BackupDest)) file=$((Get-Content (Join-Path $DataDir 'settings.json') -Raw -ErrorAction SilentlyContinue).Length)" }
                             $ST.Phase = 1; $ST.Started = Get-Date; $sync.Done = -1; Start-Action $step.Op
                         } elseif ($el -ge $lim) { ST-Add $step 'TIMEOUT-ANALISI' "fase=$($sync.Phase)"; & $next }
                     } elseif ($ST.Phase -eq 1) {
