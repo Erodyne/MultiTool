@@ -53,11 +53,6 @@ jobs:
           "search codice $($r2.Code), lunghezza $($r2.Out.Length)"; $r2.Out | Select-Object -First 1 | ForEach-Object { $_.Substring(0, [Math]::Min(1500, $_.Length)) }
           "righe ricerca: $(@(ConvertFrom-WingetTable $r2.Out).Count)"
           "installati (export): $((Get-WingetInstalled).Count)"
-          $it = [pscustomobject]@{ Status = '' }
-          $r3 = Invoke-Winget 'install' 'VideoLAN.VLC' 'winget' $it
-          "installa VLC: codice $($r3.Code) ($('0x{0:X8}' -f $r3.Code)) stato=$($it.Status)"
-          ($r3.Out -split "`n" | Where-Object { $_ -match '\w' } | Select-Object -Last 15) -join "`n"
-          & $wg list --id VideoLAN.VLC --accept-source-agreements --disable-interactivity | Select-Object -Last 3
 
       - name: Collaudo dell'interfaccia (tutte le sezioni e le azioni)
         shell: pwsh

@@ -175,6 +175,16 @@ function Invoke-Winget([string]$Verb, [string]$Id, [string]$Source, $It, [switch
     if ($Scoped) { $a += ' --scope machine' }
     if ($Verb -eq 'upgrade') { $a += ' --include-unknown' }
     if ($Source) { $a += " --source $Source" }
+    for ($try = 0; $try -lt 3; $try++) {
+        $r = Invoke-WingetOnce $a $It
+        if ($r.Code -ne -2147467260) { return $r }
+        if ($It) { $It.Status = 'Nuovo tentativo…' }
+        Start-Sleep -Seconds (5 * ($try + 1))
+    }
+    $r
+}
+
+function Invoke-WingetOnce([string]$a, $It) {
     if (-not $It) { return Invoke-Hidden (Get-WingetPath) $a }
     $cb = {
         param($l)
