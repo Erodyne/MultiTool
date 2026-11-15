@@ -5511,7 +5511,7 @@ function Start-Action([string]$op) {
     $ui.LGo.IsEnabled = $false; $ui.LGo2.IsEnabled = $false
     $ui.LCancel.Content = T 'ANNULLA'; $ui.LCancel.IsEnabled = $true
     Set-Busy $true
-    [void][NativePow.Power]::SetThreadExecutionState(0x80000001)
+    try { [void][NativePow.Power]::SetThreadExecutionState([uint32]2147483649) } catch {}
     $restore = [bool]$M.Restore -and [bool]$Settings.Restore -and $op -notin 'web', 'restore', 'enable', 'skipver'
     $code = @'
 if ($restore) {
@@ -5525,7 +5525,8 @@ try {
 foreach ($x in @($items)) { if ($x.StatusKind -in 'wait', 'run') { Set-It $x 'skip' 'Non eseguito' } }
 $sync.Phase = 'done'
 '@
-    Start-Bg $code @{ items = $sel; op = $op; silent = [bool]$ui.LSilent.IsChecked; area = $(if ($M.TitleIt) { $M.TitleIt } else { $M.Title }); restore = $restore }
+    try { Start-Bg $code @{ items = $sel; op = $op; silent = [bool]$ui.LSilent.IsChecked; area = $(if ($M.TitleIt) { $M.TitleIt } else { $M.Title }); restore = $restore } }
+    catch { Write-ErrLog "Avvio azione: $($_.Exception.Message)"; $sync.Extra = 'Errore: ' + $_.Exception.Message; $sync.Phase = 'done' }
 }
 
 function Test-RemoteSession {
@@ -6739,7 +6740,7 @@ $timer.Add_Tick({
             if (-not $sync.Cancel) { $ui.LSub.Text = $sync.Status }
         }
         'done' {
-            [void][NativePow.Power]::SetThreadExecutionState(0x80000000)
+            try { [void][NativePow.Power]::SetThreadExecutionState([uint32]2147483648) } catch {}
             if ($State.HoldWork) { $State.HoldWork = $false; try { $WorkMx.ReleaseMutex() } catch {} }
             Invalidate-Cache $State.Mode
             if ($sync.ExtraRows) {
