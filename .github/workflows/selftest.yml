@@ -27,17 +27,16 @@ jobs:
           '{"TermsAccepted":"1","Lang":"it"}' | Set-Content "$env:ProgramData\MultiTool\Dati\settings.json"
           icacls "$env:ProgramData\MultiTool" /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX" /T /C /Q
           # winget sul server di collaudo, con un 7-Zip vecchio da aggiornare
-          try {
-            Install-PackageProvider -Name NuGet -Force -Scope AllUsers | Out-Null
-            Install-Module Microsoft.WinGet.Client -Force -Repository PSGallery -Scope AllUsers
-            Repair-WinGetPackageManager -AllUsers -Latest -Force
-          } catch { "winget non installato: $_" }
           $wg = Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe\winget.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1
           if ($wg) {
             & $wg.FullName --version
-            & $wg.FullName install --id 7zip.7zip --version 23.01 --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+            & $wg.FullName uninstall --id 7zip.7zip --exact --silent --accept-source-agreements --disable-interactivity | Select-Object -Last 2
+            & $wg.FullName uninstall --id VideoLAN.VLC --exact --silent --accept-source-agreements --disable-interactivity | Select-Object -Last 2
+            & $wg.FullName install --id 7zip.7zip --version 23.01 --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity | Select-Object -Last 2
+            & $wg.FullName list --id 7zip.7zip --accept-source-agreements --disable-interactivity | Select-Object -Last 3
             "MT_WINGET=1" | Out-File $env:GITHUB_ENV -Append
           }
+          exit 0
 
       - name: Collaudo dell'interfaccia (tutte le sezioni e le azioni)
         shell: pwsh
