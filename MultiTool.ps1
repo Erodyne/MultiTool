@@ -7029,6 +7029,7 @@ if ($SelfTest) {
                             $sel = @($Items | Where-Object { $_.Checkable })
                             if ($step.One) { foreach ($x in $Items) { $x.Selected = $false }; if ($sel.Count) { $sel[0].Selected = $true } }
                             if (-not @($Items | Where-Object { $_.Selected }).Count -and $sel.Count -and -not $step.One) { $sel[0].Selected = $true }
+                            if ($step.M -eq 'backup') { $gs = Get-Settings; $ST.Toasts += "debug: mem=$($Settings.BackupDest) disco=$($gs.BackupDest) esiste=$(Test-Path ([string]$gs.BackupDest)) file=$((Get-Content (Join-Path $DataDir 'settings.json') -Raw -ErrorAction SilentlyContinue).Length)" }
                             $ST.Phase = 1; $ST.Started = Get-Date; $sync.Done = -1; Start-Action $step.Op
                         } elseif ($el -ge $lim) { ST-Add $step 'TIMEOUT-ANALISI' "fase=$($sync.Phase)"; & $next }
                     } elseif ($ST.Phase -eq 1) {
