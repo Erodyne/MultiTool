@@ -6978,7 +6978,8 @@ if ($SelfTest) {
         try {
             if ($ST.I -ge $plan.Count) {
                 $stTimer.Stop()
-                $out = @{ Version = $AppVersion; Steps = $ST.Res; Messages = @([MtTr]::AutoLog); Minutes = [int]((Get-Date) - $ST.T0).TotalMinutes }
+                $errs = @($Error | Select-Object -Last 60 | ForEach-Object { "L$($_.InvocationInfo.ScriptLineNumber): $($_.Exception.Message)" })
+                $out = @{ Version = $AppVersion; Steps = $ST.Res; Messages = @([MtTr]::AutoLog); Minutes = [int]((Get-Date) - $ST.T0).TotalMinutes; Errors = $errs }
                 ConvertTo-Json $out -Depth 5 | Set-Content (Join-Path $SelfTest 'risultati.json') -Encoding UTF8
                 Get-ChildItem (Join-Path $DataDir 'Logs') -File -ErrorAction SilentlyContinue | Copy-Item -Destination $SelfTest -Force
                 Copy-Item (Join-Path $DataDir 'history.jsonl') $SelfTest -Force -ErrorAction SilentlyContinue

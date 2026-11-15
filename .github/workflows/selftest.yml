@@ -36,7 +36,7 @@ jobs:
           if (-not $p.WaitForExit(100 * 60 * 1000)) { $p.Kill(); "TEMPO SCADUTO" }
           "uscita: $($p.ExitCode)"
           Get-ChildItem $out -ErrorAction SilentlyContinue | Select-Object Name, Length | Format-Table | Out-String | Write-Host
-          if (Test-Path "$out\risultati.json") { foreach ($s in (Get-Content "$out\risultati.json" -Raw | ConvertFrom-Json).Steps) { "### $($s.Step) | $($s.Result) | $($s.Seconds)s | items $($s.Items) | $($s.Status)"; if ($s.Detail) { "    dettaglio: $($s.Detail)" }; if ($s.Error) { "    errore: $($s.Error)" }; if ($s.Info) { "    info: $($s.Info)" } } ; "MESSAGGI:"; (Get-Content "$out\risultati.json" -Raw | ConvertFrom-Json).Messages }
+          if (Test-Path "$out\risultati.json") { foreach ($s in (Get-Content "$out\risultati.json" -Raw | ConvertFrom-Json).Steps) { "### $($s.Step) | $($s.Result) | $($s.Seconds)s | items $($s.Items) | $($s.Status)"; if ($s.Detail) { "    dettaglio: $($s.Detail)" }; if ($s.Error) { "    errore: $($s.Error)" }; if ($s.Info) { "    info: $($s.Info)" } } ; "MESSAGGI:"; (Get-Content "$out\risultati.json" -Raw | ConvertFrom-Json).Messages; "ERRORI-PS:"; (Get-Content "$out\risultati.json" -Raw | ConvertFrom-Json).Errors | ForEach-Object { "ERR> $_" } }
           Get-Content "$out\errori.log" -ErrorAction SilentlyContinue
 
       - name: Collaudo riga di comando (-Pulizia)
