@@ -3,7 +3,7 @@
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.15.1'
+$AppVersion = '2026.11.15.2'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
@@ -114,6 +114,33 @@ function Get-Cut([string]$l, [int]$a, [int]$b) {
     return $l.Substring($a, $b - $a).Trim()
 }
 
+function Get-WingetInstalled {
+    # elenco esatto dei programmi installati riconosciuti da winget (ID completi, mai troncati)
+    if ($script:WgInst) { return $script:WgInst }
+    $map = @{}
+    $f = Join-Path $env:TEMP ("mt-export-{0}.json" -f [guid]::NewGuid().ToString('N'))
+    try {
+        [void](Invoke-Hidden (Get-WingetPath) "export -o `"$f`" --include-versions --accept-source-agreements --disable-interactivity" 240)
+        if (Test-Path $f) {
+            foreach ($src in @((Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json).Sources)) {
+                foreach ($p in @($src.Packages)) { if ($p.PackageIdentifier) { $map[[string]$p.PackageIdentifier] = @{ Version = [string]$p.Version; Source = [string]$src.SourceDetails.Name } } }
+            }
+        }
+    } catch {} finally { Remove-Item $f -Force -ErrorAction SilentlyContinue }
+    $script:WgInst = $map
+    $map
+}
+function Resolve-WingetId([string]$Id) {
+    # winget accorcia gli ID lunghi con "…": li ricostruisco dall'elenco dei programmi installati
+    if ($Id -notmatch '…$') { return $Id }
+    $pre = $Id.TrimEnd('…')
+    $c = @((Get-WingetInstalled).Keys | Where-Object { $_.StartsWith($pre, [StringComparison]::OrdinalIgnoreCase) })
+    if ($c.Count -eq 1) { $c[0] } else { $Id }
+}
+function Get-InstalledNames {
+    $keys = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*', "$((Get-UserCtx).Hive)\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*", 'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    @(Get-ItemProperty $keys -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } | ForEach-Object { [string]$_.DisplayName }) + @(Get-UserAppx | ForEach-Object { [string]$_.Name })
+}
 function ConvertFrom-WingetTable([string]$Text, [switch]$FirstOnly) {
     $lines = $Text -split "`n" | ForEach-Object { ($_ -split "`r")[-1].TrimEnd() }
     if ($FirstOnly) {
@@ -857,7 +884,7 @@ function Invoke-MaintStep($it) {
             $it.Sub = 'Cerco aggiornamenti…'
             Start-StoreScan
             $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity' 300
-            $list = @(ConvertFrom-WingetTable $r.Out -FirstOnly | Where-Object { $_.Cols.Count -ge 4 -and $excl -notcontains $_.Cols[1] -and $_.Cols[1] -notmatch '…$' -and -not (Test-SkippedVer $_.Cols) } |
+            $list = @(ConvertFrom-WingetTable $r.Out -FirstOnly | ForEach-Object { if ($_.Cols.Count -ge 2) { $_.Cols[1] = Resolve-WingetId $_.Cols[1] }; $_ } | Where-Object { $_.Cols.Count -ge 4 -and $excl -notcontains $_.Cols[1] -and $_.Cols[1] -notmatch '…$' -and -not (Test-SkippedVer $_.Cols) } |
                       Sort-Object { $_.Cols[1] -eq 'Microsoft.AppInstaller' })
             $ok = 0; $err = 0; $i = 0; $skp = 0
             foreach ($t in $list) {
@@ -2539,6 +2566,7 @@ if ($Auto) {
         $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity' 300
         foreach ($t in @(ConvertFrom-WingetTable $r.Out -FirstOnly | Sort-Object { $_.Cols[1] -eq 'Microsoft.AppInstaller' })) {
             $c = $t.Cols
+            if ($c.Count -ge 2) { $c[1] = Resolve-WingetId $c[1] }
             if ($c.Count -lt 4 -or $excl -contains $c[1] -or $c[1] -match '…$' -or (Test-SkippedVer $c)) { continue }
             $src = if ($c.Count -ge 5) { $c[4] } else { '' }
             Ensure-RestorePoint
@@ -3066,7 +3094,7 @@ $xaml = @'
             <TextBlock Text="PROGRAMMI" Style="{StaticResource NavSection}"/>
             <RadioButton x:Name="NavUpdates"   Style="{StaticResource Nav}" Tag="&#xE895;" Content="Aggiorna programmi"/>
             <RadioButton x:Name="NavInstall"   Style="{StaticResource Nav}" Tag="&#xE896;" Content="Installer locali"/>
-            <RadioButton x:Name="NavCatalog"   Style="{StaticResource Nav}" Tag="&#xE721;" Content="Catalogo winget"/>
+            <RadioButton x:Name="NavCatalog"   Style="{StaticResource Nav}" Tag="&#xE721;" Content="Catalogo winget" Visibility="Collapsed"/>
             <RadioButton x:Name="NavPacks"     Style="{StaticResource Nav}" Tag="&#xE7B8;" Content="Pacchetti consigliati"/>
             <RadioButton x:Name="NavProfiles"  Style="{StaticResource Nav}" Tag="&#xE8F1;" Content="Profili"/>
             <RadioButton x:Name="NavUninstall" Style="{StaticResource Nav}" Tag="&#xE74D;" Content="Disinstalla"/>
@@ -3986,9 +4014,11 @@ $sync.Status = 'Avvio la scansione del Microsoft Store…'
 Start-StoreScan
 $sync.Status = 'Interrogo winget, attendi qualche secondo…'
 $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity' 300
+$sync.Status = 'Leggo i programmi installati…'
 foreach ($t in ConvertFrom-WingetTable $r.Out -FirstOnly) {
     $c = $t.Cols
     if ($c.Count -lt 4) { continue }
+    $c[1] = Resolve-WingetId $c[1]
     $src = if ($c.Count -ge 5) { $c[4] } else { '' }
     $ex  = $excl -contains $c[1]
     $sv  = $skv -and $skv.($c[1]) -and $skv.($c[1]) -eq $c[3]
@@ -3998,7 +4028,7 @@ foreach ($t in ConvertFrom-WingetTable $r.Out -FirstOnly) {
         Checkable = (-not $cut); Status = $(if ($cut) { 'ID troncato' } else { '' }); StatusKind = $(if ($cut) { 'skip' } else { 'none' }) }))
 }
 $n = $rows.Count
-$sync.ScanInfo = if ($n) { "Trovati $n aggiornamenti. Controlla l'elenco, poi scegli se procedere." } else { $null }
+$sync.ScanInfo = if ($n) { "Trovati $n aggiornamenti. Controlla l'elenco, poi scegli se procedere. Per installare un programma nuovo scrivi il nome nella casella e premi Cerca." } else { $null }
 '@
 
 $ActUpdates = @'
@@ -4937,23 +4967,24 @@ $sync.ScanInfo = "Ultimi 7 giorni: $nErr errori di sistema  ·  $nBsod schermate
 
 $ScanPacks = @'
 $sync.Status = 'Controllo i programmi già installati…'
-$have = ''
-try { $have = (Invoke-Hidden (Get-WingetPath) 'list --accept-source-agreements --disable-interactivity' 180).Out } catch {}
+$wg = Get-WingetInstalled
+$names = @(Get-InstalledNames)
 $packs = @(
     @('Browser', 'Google.Chrome', 'Google Chrome'), @('Browser', 'Mozilla.Firefox', 'Mozilla Firefox'), @('Browser', 'Brave.Brave', 'Brave')
-    @('Ufficio', 'TheDocumentFoundation.LibreOffice', 'LibreOffice'), @('Ufficio', 'Adobe.Acrobat.Reader.64-bit', 'Adobe Acrobat Reader'), @('Ufficio', 'SumatraPDF.SumatraPDF', 'SumatraPDF')
-    @('Ufficio', 'Notepad++.Notepad++', 'Notepad++'), @('Multimedia', 'VideoLAN.VLC', 'VLC'), @('Multimedia', 'Spotify.Spotify', 'Spotify')
-    @('Multimedia', 'IrfanSkiljan.IrfanView', 'IrfanView'), @('Multimedia', 'Audacity.Audacity', 'Audacity'), @('Multimedia', 'OBSProject.OBSStudio', 'OBS Studio')
-    @('Comunicazione', 'Zoom.Zoom', 'Zoom'), @('Comunicazione', 'Telegram.TelegramDesktop', 'Telegram'), @('Comunicazione', 'Discord.Discord', 'Discord')
-    @('Utilità', '7zip.7zip', '7-Zip'), @('Utilità', 'Microsoft.PowerToys', 'PowerToys'), @('Utilità', 'Rufus.Rufus', 'Rufus')
-    @('Utilità', 'CrystalDewWorld.CrystalDiskInfo', 'CrystalDiskInfo'), @('Utilità', 'CPUID.CPU-Z', 'CPU-Z'), @('Utilità', 'REALiX.HWiNFO', 'HWiNFO')
-    @('Sicurezza', 'Malwarebytes.Malwarebytes', 'Malwarebytes'), @('Sicurezza', 'KeePassXCTeam.KeePassXC', 'KeePassXC'), @('Sicurezza', 'Bitwarden.Bitwarden', 'Bitwarden')
-    @('Assistenza remota', 'RustDesk.RustDesk', 'RustDesk'), @('Assistenza remota', 'AnyDesk.AnyDesk', 'AnyDesk'), @('Assistenza remota', 'TeamViewer.TeamViewer', 'TeamViewer')
-    @('Componenti', 'Microsoft.VCRedist.2015+.x64', 'Visual C++ 2015-2022 (x64)'), @('Componenti', 'Microsoft.DotNet.DesktopRuntime.8', '.NET Desktop Runtime 8'), @('Componenti', 'Oracle.JavaRuntimeEnvironment', 'Java')
-    @('Giochi', 'Valve.Steam', 'Steam'), @('Giochi', 'EpicGames.EpicGamesLauncher', 'Epic Games Launcher')
+    @('Ufficio', 'TheDocumentFoundation.LibreOffice', 'LibreOffice'), @('Ufficio', 'Adobe.Acrobat.Reader.64-bit', 'Adobe Acrobat Reader', '^Adobe Acrobat( Reader| \(64-bit\)|$)'), @('Ufficio', 'SumatraPDF.SumatraPDF', 'SumatraPDF', '^SumatraPDF')
+    @('Ufficio', 'Notepad++.Notepad++', 'Notepad++', '^Notepad\+\+'), @('Multimedia', 'VideoLAN.VLC', 'VLC', '^VLC media player'), @('Multimedia', 'Spotify.Spotify', 'Spotify', '^Spotify|SpotifyAB\.SpotifyMusic')
+    @('Multimedia', 'IrfanSkiljan.IrfanView', 'IrfanView', '^IrfanView'), @('Multimedia', 'Audacity.Audacity', 'Audacity'), @('Multimedia', 'OBSProject.OBSStudio', 'OBS Studio', '^OBS Studio')
+    @('Comunicazione', 'Zoom.Zoom', 'Zoom', '^Zoom( Workplace|$| \()'), @('Comunicazione', 'Telegram.TelegramDesktop', 'Telegram', '^Telegram'), @('Comunicazione', 'Discord.Discord', 'Discord')
+    @('Utilità', '7zip.7zip', '7-Zip', '^7-Zip'), @('Utilità', 'Microsoft.PowerToys', 'PowerToys', '^PowerToys'), @('Utilità', 'Rufus.Rufus', 'Rufus')
+    @('Utilità', 'CrystalDewWorld.CrystalDiskInfo', 'CrystalDiskInfo', '^CrystalDiskInfo'), @('Utilità', 'CPUID.CPU-Z', 'CPU-Z', '^CPUID CPU-Z|^CPU-Z'), @('Utilità', 'REALiX.HWiNFO', 'HWiNFO', '^HWiNFO')
+    @('Sicurezza', 'Malwarebytes.Malwarebytes', 'Malwarebytes'), @('Sicurezza', 'KeePassXCTeam.KeePassXC', 'KeePassXC'), @('Sicurezza', 'Bitwarden.Bitwarden', 'Bitwarden', '^Bitwarden')
+    @('Assistenza remota', 'RustDesk.RustDesk', 'RustDesk'), @('Assistenza remota', 'AnyDesk.AnyDesk', 'AnyDesk'), @('Assistenza remota', 'TeamViewer.TeamViewer', 'TeamViewer', '^TeamViewer')
+    @('Componenti', 'Microsoft.VCRedist.2015+.x64', 'Visual C++ 2015-2022 (x64)', '^Microsoft Visual C\+\+ 20(15|17|19|22).*x64'), @('Componenti', 'Microsoft.DotNet.DesktopRuntime.8', '.NET Desktop Runtime 8', 'Windows Desktop Runtime - 8\.'), @('Componenti', 'Oracle.JavaRuntimeEnvironment', 'Java', '^Java( \d| SE|\(TM\))')
+    @('Giochi', 'Valve.Steam', 'Steam'), @('Giochi', 'EpicGames.EpicGamesLauncher', 'Epic Games Launcher', '^Epic Games Launcher')
 )
 foreach ($p in $packs) {
-    $inst = $have -and $have.IndexOf($p[1], [StringComparison]::OrdinalIgnoreCase) -ge 0
+    $pat = if ($p.Count -ge 4) { $p[3] } else { '^' + [regex]::Escape($p[2]) }
+    $inst = $wg.ContainsKey($p[1]) -or [bool]@($names | Where-Object { $_ -match $pat }).Count
     $rows.Add((New-Row @{ Name = $p[2]; Sub = $p[1]; Key = $p[1]; C1 = $p[0]; Data = 'winget'; Tag = $(if ($inst) { 'installato' } else { '' }); TagKind = $(if ($inst) { 'ok' } else { 'none' })
         Selected = $false; Glyph = [string][char]0xE7B8 })) | Out-Null
 }
@@ -5094,8 +5125,8 @@ $Modes = @{
         Sub = 'Analisi di winget e Microsoft Store…'; H = 'INSTALLATA', 'NUOVA', 'ORIGINE', 'STATO'
         Scan = $ScanUpdates; Action = $ActUpdates; Go = 'PROCEDI'; Go2 = 'SALTA VERSIONE'; Go2Op = 'skipver'; Restore = $true
         X1 = @{ Text = 'Escludi selezionati'; Click = { Add-Exclusions } }
-        X2 = @{ Text = 'Ricerca di nuovo'; Click = { Start-Scan } }
-        Empty = @{ Glyph = (G 0xE73E); Title = 'Tutto aggiornato'; Text = 'winget non ha trovato aggiornamenti disponibili.' } }
+        X2 = @{ Text = 'Ricerca di nuovo'; Click = { Start-Scan } }; SearchBox = $true
+        Empty = @{ Glyph = (G 0xE73E); Title = 'Tutto aggiornato'; Text = 'winget non ha trovato aggiornamenti. Per installare un programma nuovo scrivi il nome nella casella qui sopra e premi Cerca.' } }
 
     wu = @{ Nav = 'NavWU'; Online = $true; Credits = @(@{ T = 'Windows Update · Microsoft'; U = 'https://support.microsoft.com/windows' });  Title = 'Windows Update'; Glyph = (G 0xE777)
         Sub = 'Ricerca aggiornamenti di Windows…'; H = 'DIMENSIONE', '', 'TIPO', 'STATO'
@@ -5118,10 +5149,11 @@ $Modes = @{
         X2 = @{ Text = 'Ricarica'; Click = { Start-Scan } }
         Empty = @{ Glyph = (G 0xE8B7); Title = 'Nessun installer trovato'; Text = 'Copia file .exe, .msi, .msix o .appx nella cartella Installers, poi premi Ricarica.' } }
 
-    catalog = @{ Nav = 'NavCatalog'; Online = $true; Credits = @(@{ T = 'winget · Microsoft'; U = 'https://github.com/microsoft/winget-cli' }, @{ T = 'Repository comunitario winget-pkgs'; U = 'https://github.com/microsoft/winget-pkgs' });  Title = 'Catalogo winget'; Glyph = (G 0xE896); Search = $true
+    catalog = @{ Nav = 'NavUpdates'; Online = $true; SearchBox = $true; Credits = @(@{ T = 'winget · Microsoft'; U = 'https://github.com/microsoft/winget-cli' }, @{ T = 'Repository comunitario winget-pkgs'; U = 'https://github.com/microsoft/winget-pkgs' });  Title = 'Catalogo winget'; Glyph = (G 0xE896); Search = $true
         Sub = 'Cerca tra migliaia di programmi e installali senza scaricare nulla a mano.'; H = 'VERSIONE', 'CORRISPONDENZA', 'ORIGINE', 'STATO'
         Scan = $ScanCatalog; Action = $ActWingetInstall; Go = 'INSTALLA'; Restore = $true
         X1 = @{ Text = 'Crea profilo dai selezionati'; Click = { New-ProfileFromSelection } }
+        X2 = @{ Text = 'Torna agli aggiornamenti'; Click = { Open-Mode 'updates' } }
         Empty = @{ Glyph = (G 0xE721); Title = 'Cerca un programma'; Text = 'Scrivi un nome, ad esempio "vlc", "firefox" o "7zip", e premi Invio.' } }
 
     profiles = @{ Nav = 'NavProfiles'; Credits = @(@{ T = 'winget · Microsoft'; U = 'https://github.com/microsoft/winget-cli' });  Title = 'Profili'; Glyph = (G 0xE8F1); Silent = $true
@@ -5449,7 +5481,7 @@ function Open-Mode([string]$Mode, [hashtable]$Vars) {
     $Items.Clear()
     $ui.LTitle.Text = $M.Title; $ui.LSub.Text = $M.Sub; $ui.LSummary.Text = ''
     $ui.LH1.Text = $M.H[0]; $ui.LH2.Text = $M.H[1]; $ui.LH3.Text = $M.H[2]; $ui.LH4.Text = $M.H[3]
-    $ui.LSearchBox.Visibility = Vis $M.Search
+    $ui.LSearchBox.Visibility = Vis ($M.Search -or $M.SearchBox)
     $ui.LSilent.Visibility = Vis $M.Silent
     foreach ($x in 'X1', 'X2') {
         $b = $ui["L$x"]
@@ -5473,10 +5505,13 @@ function Open-Mode([string]$Mode, [hashtable]$Vars) {
     Reset-Footer
     if ($ui[$M.Nav]) { $ui[$M.Nav].IsChecked = $true }
     Show-View 'ViewList'
-    if ($M.Search) {
+    if ($M.Search -and -not ($Vars -and $Vars.query)) {
         $sync.Phase = 'review'; Show-Empty $M.Empty
         $ui.LSearch.Text = ''; [void]$ui.LSearch.Focus()
+    } elseif ($M.Search) {
+        $ui.LSearch.Text = $Vars.query; Start-Scan
     } else {
+        if (-not $M.Search) { $ui.LSearch.Text = '' }
         $c = $sync.Cache[$Mode]
         if ($c -and -not $Vars -and -not $c.Error -and ((Get-Date) - $c.Time).TotalMinutes -lt 20) { Use-Cache $Mode $c } else { Start-Scan }
     }
@@ -6118,7 +6153,7 @@ $CountCode = @'
 try {
     $excl = Read-Exclusions
     $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity' 300
-    $sync.UpdCount = @(ConvertFrom-WingetTable $r.Out -FirstOnly | Where-Object { $_.Cols.Count -ge 4 -and $excl -notcontains $_.Cols[1] -and $_.Cols[1] -notmatch '…$' -and -not (Test-SkippedVer $_.Cols) }).Count
+    $sync.UpdCount = @(ConvertFrom-WingetTable $r.Out -FirstOnly | ForEach-Object { if ($_.Cols.Count -ge 2) { $_.Cols[1] = Resolve-WingetId $_.Cols[1] }; $_ } | Where-Object { $_.Cols.Count -ge 4 -and $excl -notcontains $_.Cols[1] -and $_.Cols[1] -notmatch '…$' -and -not (Test-SkippedVer $_.Cols) }).Count
 } catch { $sync.UpdCount = -1 }
 '@
 function Start-CountCheck { $sync.UpdCount = $null; Start-Bg $CountCode @{} }
@@ -6244,7 +6279,9 @@ $ui.LCancel.Add_Click({
 
 $doSearch = {
     $q = ($ui.LSearch.Text -replace '["`]', '').Trim()
-    if ($q.Length -ge 2) { $State.Vars = @{ query = $q }; Start-Scan }
+    if ($q.Length -lt 2) { Toast 'Scrivi almeno 2 lettere del programma da cercare'; return }
+    if ($sync.Phase -eq 'run') { return }
+    if ($State.Mode -eq 'catalog') { $State.Vars = @{ query = $q }; Start-Scan } else { Open-Mode 'catalog' @{ query = $q } }
 }
 $ui.LSearchGo.Add_Click($doSearch)
 $ui.LSearch.Add_KeyDown({ param($s, $e) if ($e.Key -eq 'Return') { & $doSearch } })
@@ -6958,9 +6995,13 @@ if ($SelfTest) {
         @{ N = 'menu-cliccabili'; K = 'hit' }
         @{ N = 'clic-nav-pulizia'; K = 'click'; B = 'NavCleanup'; M = 'cleanup' }
         @{ N = 'hardware'; K = 'hw'; T = 180 }
-        @{ N = 'full'; K = 'mode'; M = 'full' }, @{ N = 'deliver'; K = 'mode'; M = 'deliver' }, @{ N = 'updates'; K = 'mode'; M = 'updates'; T = 400 }
+        @{ N = 'full'; K = 'mode'; M = 'full' }, @{ N = 'deliver'; K = 'mode'; M = 'deliver' }, @{ N = 'updates'; K = 'mode'; M = 'updates'; T = 400; Expect = { -not $env:MT_WINGET -or @($Items | Where-Object { $_.Key -eq '7zip.7zip' }).Count } }
         @{ N = 'installers'; K = 'mode'; M = 'installers' }, @{ N = 'catalog'; K = 'mode'; M = 'catalog'; V = @{ query = 'vlc' }; T = 300 }
-        @{ N = 'packs'; K = 'mode'; M = 'packs'; T = 300 }, @{ N = 'profiles'; K = 'mode'; M = 'profiles' }, @{ N = 'uninstall'; K = 'mode'; M = 'uninstall' }
+        @{ N = 'packs'; K = 'mode'; M = 'packs'; T = 300; Expect = { -not $env:MT_WINGET -or @($Items | Where-Object { $_.Key -eq '7zip.7zip' -and $_.Tag -eq 'installato' }).Count } }
+        @{ N = 'ricerca-in-aggiorna'; K = 'search'; Q = 'vlc'; T = 300 }
+        @{ N = 'azione-installa-da-ricerca'; K = 'act'; M = 'catalog'; V = @{ query = 'vlc' }; Op = 'go'; Pick = 'VideoLAN.VLC'; T = 900 }
+        @{ N = 'azione-aggiorna-7zip'; K = 'act'; M = 'updates'; Op = 'go'; Pick = '7zip.7zip'; T = 900 }
+        @{ N = 'packs-dopo-installazione'; K = 'mode'; M = 'packs'; T = 300; Expect = { -not $env:MT_WINGET -or @($Items | Where-Object { $_.Key -eq 'VideoLAN.VLC' -and $_.Tag -eq 'installato' }).Count } }, @{ N = 'profiles'; K = 'mode'; M = 'profiles' }, @{ N = 'uninstall'; K = 'mode'; M = 'uninstall' }
         @{ N = 'backup'; K = 'mode'; M = 'backup' }, @{ N = 'wu'; K = 'mode'; M = 'wu'; T = 600 }, @{ N = 'drivers'; K = 'mode'; M = 'drivers' }
         @{ N = 'startup'; K = 'mode'; M = 'startup' }, @{ N = 'services'; K = 'mode'; M = 'services' }, @{ N = 'processes'; K = 'mode'; M = 'processes' }
         @{ N = 'cleanup'; K = 'mode'; M = 'cleanup' }, @{ N = 'bigfiles'; K = 'mode'; M = 'bigfiles'; T = 600 }, @{ N = 'space'; K = 'mode'; M = 'space'; V = @{ path = "$env:SystemRoot\Temp" } }
@@ -7005,6 +7046,7 @@ if ($SelfTest) {
                     'act'   { Open-Mode $step.M $step.V }
                     'click' { $b = $ui[$step.B]; $b.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $b))); if ($b -is [Windows.Controls.RadioButton]) { $b.IsChecked = $true } }
                     'tray'  { Hide-ToTray }
+                    'search' { Open-Mode 'updates'; $ST.Phase = 0 }
                 }
                 return
             }
@@ -7018,15 +7060,28 @@ if ($SelfTest) {
                     if ($el -ge 4 -and $ST.Phase -eq 0) { $ST.Seen = $win.IsVisible; Show-Main; $ST.Phase = 1 }
                     elseif ($el -ge 6 -and $ST.Phase -eq 1) { ST-Add $step $(if (-not $ST.Seen -and $win.IsVisible) { 'ok' } else { 'ERRORE' }) "nascosta=$(-not $ST.Seen) riaperta=$($win.IsVisible)"; & $next }
                 }
+                'search' {
+                    if ($ST.Phase -eq 0 -and $sync.Phase -in 'review', 'idle' -and $el -ge 1.5) {
+                        $ST.Phase = 1; $ui.LSearch.Text = $step.Q
+                        $ui.LSearchGo.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Primitives.ButtonBase]::ClickEvent, $ui.LSearchGo)))
+                    } elseif ($ST.Phase -eq 1 -and $State.Mode -eq 'catalog' -and $sync.Phase -in 'review', 'idle' -and $el -ge 4) {
+                        $n = @($Items | Where-Object { $_.Key -eq 'VideoLAN.VLC' }).Count
+                        ST-Add $step $(if ($sync.Error -or ($env:MT_WINGET -and -not $n)) { 'ERRORE' } else { 'ok' }) "box visibile=$($ui.LSearchBox.Visibility) modo=$($State.Mode) risultati=$($Items.Count) vlc=$n"; & $next
+                    } elseif ($el -ge $lim) { ST-Add $step 'TIMEOUT' "fase=$($sync.Phase) modo=$($State.Mode)"; & $next }
+                }
                 'hw' { if ($ui.HwStatus.Visibility -ne 'Visible' -and $el -ge 5 -or $el -ge $lim) { ST-Add $step $(if ($el -ge $lim) { 'TIMEOUT' } else { 'ok' }) ([string]$sync.HwStatus); & $next } }
                 'mode' {
-                    if ($sync.Phase -in 'review', 'idle' -and $el -ge 1.5) { ST-Add $step $(if ($sync.Error) { 'ERRORE' } else { 'ok' }) ''; & $next }
+                    if ($sync.Phase -in 'review', 'idle' -and $el -ge 1.5) {
+                        $okx = if ($step.Expect) { [bool](& $step.Expect) } else { $true }
+                        ST-Add $step $(if ($sync.Error -or -not $okx) { 'ERRORE' } else { 'ok' }) $(if (-not $okx) { "attesa non soddisfatta: $($step.Expect)  ·  elementi: $((@($Items | ForEach-Object { "$($_.Name) [$($_.Key)] $($_.Tag)" }) | Select-Object -First 12) -join ' | ')" } else { '' }); & $next
+                    }
                     elseif ($el -ge $lim) { ST-Add $step 'TIMEOUT' "fase=$($sync.Phase)"; & $next }
                 }
                 'act' {
                     if ($ST.Phase -eq 0) {
                         if ($sync.Phase -in 'review', 'idle' -and $el -ge 1.5) {
                             $sel = @($Items | Where-Object { $_.Checkable })
+                            if ($step.Pick) { $sel = @($Items | Where-Object { $_.Checkable -and $_.Key -eq $step.Pick }); $step.One = $true }
                             if ($step.One) { foreach ($x in $Items) { $x.Selected = $false }; if ($sel.Count) { $sel[0].Selected = $true } }
                             if (-not @($Items | Where-Object { $_.Selected }).Count -and $sel.Count -and -not $step.One) { $sel[0].Selected = $true }
                             $ST.Phase = 1; $ST.Started = Get-Date; $sync.Done = -1; Start-Action $step.Op

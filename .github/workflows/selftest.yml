@@ -26,7 +26,18 @@ jobs:
           New-Item -ItemType Directory "$env:ProgramData\MultiTool\Dati" -Force | Out-Null
           '{"TermsAccepted":"1","Lang":"it"}' | Set-Content "$env:ProgramData\MultiTool\Dati\settings.json"
           icacls "$env:ProgramData\MultiTool" /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX" /T /C /Q
-          winget --version 2>$null; "winget exit $LASTEXITCODE"
+          # winget sul server di collaudo, con un 7-Zip vecchio da aggiornare
+          try {
+            Install-PackageProvider -Name NuGet -Force -Scope AllUsers | Out-Null
+            Install-Module Microsoft.WinGet.Client -Force -Repository PSGallery -Scope AllUsers
+            Repair-WinGetPackageManager -AllUsers -Latest -Force
+          } catch { "winget non installato: $_" }
+          $wg = Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe\winget.exe" -ErrorAction SilentlyContinue | Select-Object -Last 1
+          if ($wg) {
+            & $wg.FullName --version
+            & $wg.FullName install --id 7zip.7zip --version 23.01 --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+            "MT_WINGET=1" | Out-File $env:GITHUB_ENV -Append
+          }
 
       - name: Collaudo dell'interfaccia (tutte le sezioni e le azioni)
         shell: pwsh
