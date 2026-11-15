@@ -1,5 +1,6 @@
 name: suite-test
 on: { push: { branches: [ci-suite-test] } }
+permissions: { contents: write }
 jobs:
   t:
     runs-on: windows-latest
@@ -19,5 +20,7 @@ jobs:
             [Drawing.Graphics]::FromImage($bmp).CopyFromScreen(0,0,0,0,$bmp.Size); $bmp.Save("$PWD\$exe.png")
             if (-not $p.HasExited) { Stop-Process $p -Force }
           }
-      - uses: actions/upload-artifact@v4
-        with: { name: shots, path: '*.png' }
+      - shell: pwsh
+        run: |
+          git config user.name ci; git config user.email ci@example.com
+          git add -f csc.exe *.png; git commit -qm "build"; git push -q origin HEAD:ci-suite-out --force
