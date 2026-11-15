@@ -2463,6 +2463,7 @@ Le attività pianificate vengono registrate per l'account amministratore {0}, no
 Stai usando l'account amministratore {0}: i file finiranno nel suo Cestino, non in quello di {1}. Per recuperarli dovrai accedere con {2}. Continuare? ⇒ You are using the administrator account {0}: files will go to its Recycle Bin, not to {1}'s. To recover them you will need to sign in as {2}. Continue?
 MultiTool resta attivo qui. Doppio clic per riaprirlo, tasto destro › Esci per chiuderlo. ⇒ MultiTool keeps running here. Double-click to reopen it, right-click › Exit to close it.
 la {0} è in preparazione su GitHub, riprovo tra poco ⇒ {0} is being prepared on GitHub, retrying shortly
+Test di velocità non riuscito: il server di misura (Cloudflare) non risponde da questa rete ({0}) ⇒ Speed test failed: the measurement server (Cloudflare) is not reachable from this network ({0})
 '@
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml
 if (-not ('MtTr' -as [type])) {
@@ -3202,8 +3203,8 @@ $xaml = @'
                         <Border Width="38" Height="38" CornerRadius="11" Background="{StaticResource Accent}" HorizontalAlignment="Left">
                           <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
-                        <TextBlock Text="Aggiorna programmi" FontSize="15" FontWeight="SemiBold" Margin="0,12,0,0"/>
-                        <TextBlock x:Name="QUpdSub" Text="winget + Microsoft Store" FontSize="12" Foreground="#9AA0B8" Margin="0,2,0,0"/>
+                        <TextBlock Text="Aggiorna programmi" FontSize="15" FontWeight="SemiBold" Margin="0,12,0,0" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="QUpdSub" Text="winget + Microsoft Store" FontSize="12" Foreground="#9AA0B8" Margin="0,2,0,0" TextWrapping="Wrap"/>
                       </StackPanel>
                     </Button>
                     <Button x:Name="QWU" Style="{StaticResource QuickBtn}">
@@ -3211,8 +3212,8 @@ $xaml = @'
                         <Border Width="38" Height="38" CornerRadius="11" Background="{StaticResource Accent}" HorizontalAlignment="Left">
                           <TextBlock Text="&#xE777;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
-                        <TextBlock Text="Windows Update" FontSize="15" FontWeight="SemiBold" Margin="0,12,0,0"/>
-                        <TextBlock Text="Aggiornamenti di sistema" FontSize="12" Foreground="#9AA0B8" Margin="0,2,0,0"/>
+                        <TextBlock Text="Windows Update" FontSize="15" FontWeight="SemiBold" Margin="0,12,0,0" TextWrapping="Wrap"/>
+                        <TextBlock Text="Aggiornamenti di sistema" FontSize="12" Foreground="#9AA0B8" Margin="0,2,0,0" TextWrapping="Wrap"/>
                       </StackPanel>
                     </Button>
                     <Button x:Name="QDrv" Style="{StaticResource QuickBtn}">
@@ -3221,7 +3222,7 @@ $xaml = @'
                           <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <TextBlock Text="Manutenzione completa" FontSize="15" FontWeight="SemiBold" Margin="0,12,0,0" TextTrimming="CharacterEllipsis"/>
-                        <TextBlock Text="Tutto in un clic" FontSize="12" Foreground="#9AA0B8" Margin="0,2,0,0"/>
+                        <TextBlock Text="Tutto in un clic" FontSize="12" Foreground="#9AA0B8" Margin="0,2,0,0" TextWrapping="Wrap"/>
                       </StackPanel>
                     </Button>
                     <Button x:Name="QClean" Style="{StaticResource QuickBtn}">
@@ -3229,8 +3230,8 @@ $xaml = @'
                         <Border Width="38" Height="38" CornerRadius="11" Background="{StaticResource Accent}" HorizontalAlignment="Left">
                           <TextBlock Text="&#xE894;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
-                        <TextBlock Text="Pulizia disco" FontSize="15" FontWeight="SemiBold" Margin="0,12,0,0"/>
-                        <TextBlock Text="Libera spazio" FontSize="12" Foreground="#9AA0B8" Margin="0,2,0,0"/>
+                        <TextBlock Text="Pulizia disco" FontSize="15" FontWeight="SemiBold" Margin="0,12,0,0" TextWrapping="Wrap"/>
+                        <TextBlock Text="Libera spazio" FontSize="12" Foreground="#9AA0B8" Margin="0,2,0,0" TextWrapping="Wrap"/>
                       </StackPanel>
                     </Button>
                   </UniformGrid>
@@ -3297,8 +3298,8 @@ $xaml = @'
               <Grid x:Name="LHeader" Margin="17,0,25,10">
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="36"/><ColumnDefinition Width="46"/><ColumnDefinition Width="*"/>
-                  <ColumnDefinition Width="130"/><ColumnDefinition Width="26"/><ColumnDefinition Width="130"/>
-                  <ColumnDefinition Width="120"/><ColumnDefinition Width="150"/>
+                  <ColumnDefinition Width="105"/><ColumnDefinition Width="12"/><ColumnDefinition Width="110"/>
+                  <ColumnDefinition Width="110"/><ColumnDefinition Width="150"/>
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="2" x:Name="LH0" Text="NOME" Style="{StaticResource ColHead}"/>
                 <TextBlock Grid.Column="3" x:Name="LH1" Style="{StaticResource ColHead}"/>
@@ -3314,8 +3315,8 @@ $xaml = @'
                     <Grid>
                       <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="36"/><ColumnDefinition Width="46"/><ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="130"/><ColumnDefinition Width="26"/><ColumnDefinition Width="130"/>
-                        <ColumnDefinition Width="120"/><ColumnDefinition Width="150"/>
+                        <ColumnDefinition Width="105"/><ColumnDefinition Width="12"/><ColumnDefinition Width="110"/>
+                        <ColumnDefinition Width="110"/><ColumnDefinition Width="150"/>
                       </Grid.ColumnDefinitions>
                       <CheckBox Style="{StaticResource Check}" IsChecked="{Binding Selected, Mode=TwoWay}" IsEnabled="{Binding Editable}"
                                 Visibility="{Binding Checkable, Converter={StaticResource B2V}}" VerticalAlignment="Center"/>
@@ -4630,7 +4631,7 @@ $sync.ScanInfo = 'TEST VELOCITÀ misura download e upload; RIPARA CONNESSIONE az
 $ActNetwork = @'
 if ($op -eq 'speed') {
     $sync.Status = 'Misuro il download (circa 12 secondi)…'
-    $dl = Measure-Download
+    $dl = try { Measure-Download } catch { throw "Test di velocità non riuscito: il server di misura (Cloudflare) non risponde da questa rete ($($_.Exception.InnerException.Message -replace '^.*: ', ''))" }
     $sync.Status = 'Misuro l''upload…'
     $ul = try { Measure-Upload } catch { $null }
     $sync.ExtraRows = New-Object System.Collections.ArrayList
@@ -7025,10 +7026,10 @@ if ($SelfTest) {
                             $sel = @($Items | Where-Object { $_.Checkable })
                             if ($step.One) { foreach ($x in $Items) { $x.Selected = $false }; if ($sel.Count) { $sel[0].Selected = $true } }
                             if (-not @($Items | Where-Object { $_.Selected }).Count -and $sel.Count -and -not $step.One) { $sel[0].Selected = $true }
-                            $ST.Phase = 1; $ST.Started = Get-Date; Start-Action $step.Op
+                            $ST.Phase = 1; $ST.Started = Get-Date; $sync.Done = -1; Start-Action $step.Op
                         } elseif ($el -ge $lim) { ST-Add $step 'TIMEOUT-ANALISI' "fase=$($sync.Phase)"; & $next }
                     } elseif ($ST.Phase -eq 1) {
-                        if ($sync.Phase -eq 'run') { $ST.Phase = 2 }
+                        if ($sync.Phase -eq 'run' -or $sync.Done -ge 0) { $ST.Phase = 2 }
                         elseif ($el -ge 5) { ST-Add $step 'NON-AVVIATA' "fase=$($sync.Phase)"; & $next }
                     } else {
                         if ($sync.Phase -in 'review', 'idle') { ST-Add $step $(if (@($Items | Where-Object { $_.StatusKind -eq 'err' }).Count) { 'con-errori' } else { 'ok' }) ((@($Items | Where-Object { $_.StatusKind -in 'err', 'skip' } | ForEach-Object { "$($_.Name) = $($_.Status)" }) | Select-Object -First 15) -join ' | '); & $next }
