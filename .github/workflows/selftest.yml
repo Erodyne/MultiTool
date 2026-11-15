@@ -45,7 +45,7 @@ jobs:
           $h = [regex]::Match($src, "(?s)\`$Helpers = @'\r?\n(.*?)\r?\n'@").Groups[1].Value
           $DataDir = "$env:TEMP\mtdiag"; New-Item -ItemType Directory $DataDir -Force | Out-Null; $sync = @{}; $Root = (Get-Location).Path
           . ([scriptblock]::Create($h))
-          "winget: $(Get-WingetPath)"
+          "winget: $(Get-WingetPath)"; $wg = Get-WingetPath
           $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity' 300
           "codice $($r.Code), lunghezza $($r.Out.Length)"; "---OUT---"; $r.Out; "---ERR---"; $r.Err
           "righe tabella: $(@(ConvertFrom-WingetTable $r.Out -FirstOnly).Count)"
@@ -53,6 +53,11 @@ jobs:
           "search codice $($r2.Code), lunghezza $($r2.Out.Length)"; $r2.Out | Select-Object -First 1 | ForEach-Object { $_.Substring(0, [Math]::Min(1500, $_.Length)) }
           "righe ricerca: $(@(ConvertFrom-WingetTable $r2.Out).Count)"
           "installati (export): $((Get-WingetInstalled).Count)"
+          $it = [pscustomobject]@{ Status = '' }
+          $r3 = Invoke-Winget 'install' 'VideoLAN.VLC' 'winget' $it
+          "installa VLC: codice $($r3.Code) ($('0x{0:X8}' -f $r3.Code)) stato=$($it.Status)"
+          ($r3.Out -split "`n" | Where-Object { $_ -match '\w' } | Select-Object -Last 15) -join "`n"
+          & $wg list --id VideoLAN.VLC --accept-source-agreements --disable-interactivity | Select-Object -Last 3
 
       - name: Collaudo dell'interfaccia (tutte le sezioni e le azioni)
         shell: pwsh
