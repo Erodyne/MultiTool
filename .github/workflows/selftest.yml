@@ -38,6 +38,22 @@ jobs:
           }
           exit 0
 
+      - name: Diagnostica winget dentro MultiTool
+        shell: powershell
+        run: |
+          $src = Get-Content MultiTool.ps1 -Raw
+          $h = [regex]::Match($src, "(?s)\`$Helpers = @'\r?\n(.*?)\r?\n'@").Groups[1].Value
+          $DataDir = "$env:TEMP\mtdiag"; New-Item -ItemType Directory $DataDir -Force | Out-Null; $sync = @{}; $Root = (Get-Location).Path
+          . ([scriptblock]::Create($h))
+          "winget: $(Get-WingetPath)"
+          $r = Invoke-Hidden (Get-WingetPath) 'upgrade --include-unknown --accept-source-agreements --disable-interactivity' 300
+          "codice $($r.Code), lunghezza $($r.Out.Length)"; "---OUT---"; $r.Out; "---ERR---"; $r.Err
+          "righe tabella: $(@(ConvertFrom-WingetTable $r.Out -FirstOnly).Count)"
+          $r2 = Invoke-Hidden (Get-WingetPath) 'search "vlc" --accept-source-agreements --disable-interactivity' 120
+          "search codice $($r2.Code), lunghezza $($r2.Out.Length)"; $r2.Out | Select-Object -First 1 | ForEach-Object { $_.Substring(0, [Math]::Min(1500, $_.Length)) }
+          "righe ricerca: $(@(ConvertFrom-WingetTable $r2.Out).Count)"
+          "installati (export): $((Get-WingetInstalled).Count)"
+
       - name: Collaudo dell'interfaccia (tutte le sezioni e le azioni)
         shell: pwsh
         run: |
