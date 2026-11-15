@@ -6822,7 +6822,7 @@ function Hide-ToTray {
 }
 $ui.BtnClose.Add_Click({ if ($Settings.Tray) { Hide-ToTray } else { $win.Close() } })
 # Errori imprevisti nell'interfaccia: li registro senza chiudere il programma
-$win.Dispatcher.add_UnhandledException({ param($s, $e) try { Write-ErrLog "Interfaccia: $($e.Exception.Message)" } catch {}; $e.Handled = $true })
+$win.Dispatcher.add_UnhandledException({ param($s, $e) try { $x = $e.Exception; while ($x.InnerException) { $x = $x.InnerException }; Write-ErrLog "Interfaccia: $($x.Message) $(if ($x.ErrorRecord) { $x.ErrorRecord.InvocationInfo.PositionMessage + ' ' + $x.ErrorRecord.ScriptStackTrace })" } catch {}; $e.Handled = $true })
 $win.Add_Closing({
     param($s, $e)
     if ($Settings.Tray -and -not $State.ForceClose) { $e.Cancel = $true; [void]$win.Dispatcher.BeginInvoke([Action]{ Hide-ToTray }); return }
@@ -7029,7 +7029,11 @@ if ($SelfTest) {
                     }
                 }
             }
-        } catch { [void]$ST.Res.Add(@{ Step = "eccezione-collaudo"; Result = 'ERRORE'; Detail = $_.Exception.Message }); $ST.I++; $ST.Started = $null }
+        } catch {
+            $ex = $_; $inner = $ex.Exception; while ($inner.InnerException) { $inner = $inner.InnerException }
+            $pos = if ($inner.ErrorRecord) { "$($inner.ErrorRecord.InvocationInfo.PositionMessage) $($inner.ErrorRecord.ScriptStackTrace)" } else { "$($ex.InvocationInfo.PositionMessage) $($ex.ScriptStackTrace)" }
+            [void]$ST.Res.Add(@{ Step = "eccezione-collaudo ($($plan[$ST.I].N))"; Result = 'ERRORE'; Detail = "$($inner.Message) @ $pos" }); $ST.I++; $ST.Started = $null
+        }
     })
 }
 if ($SelfTest) { $win.Add_ContentRendered({ $stTimer.Start() }) }
