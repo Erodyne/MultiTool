@@ -6899,7 +6899,7 @@ try {
 } catch {}
 if ($SelfTest) { } elseif (-not (Test-Metered)) { Start-CountCheck; Start-UpdCheck } else { $ui.SetUpdInfo.Text = "Versione installata: $AppVersion  ·  connessione a consumo: controllo rimandato" }
 Update-AutoInfo
-if ($SelfTest) { $Settings.TermsAccepted = $TermsVersion; $Settings.Prefetch = $false }
+if ($SelfTest) { $Settings.TermsAccepted = $TermsVersion; $Settings.Prefetch = $false; $Settings.BackupDest = Join-Path $env:TEMP 'mt-backup'; New-Item -ItemType Directory $Settings.BackupDest -Force | Out-Null }
 if ($Settings.TermsAccepted -ne $TermsVersion) { Show-About $true }
 elseif ($Hidden) {
     Show-View 'ViewHome'; $State.DeferPrefetch = $true
@@ -6975,6 +6975,9 @@ if ($SelfTest) {
         @{ N = 'azione-sicurezza'; K = 'act'; M = 'security'; Op = 'go'; T = 900 }
         @{ N = 'azione-rete-velocita'; K = 'act'; M = 'network'; Op = 'speed'; T = 300 }
         @{ N = 'azione-punto-ripristino'; K = 'act'; M = 'restore'; Op = 'create'; T = 300 }
+        @{ N = 'azione-backup'; K = 'act'; M = 'backup'; Op = 'go'; T = 600 }
+        @{ N = 'azione-backup-ripetuto'; K = 'act'; M = 'backup'; Op = 'go'; T = 600 }
+        @{ N = 'cronologia-dopo-azioni'; K = 'mode'; M = 'history' }
         @{ N = 'menu-dopo-azioni'; K = 'hit' }
         @{ N = 'nascondi-in-area-notifica'; K = 'tray' }
         @{ N = 'menu-finale'; K = 'hit' }
