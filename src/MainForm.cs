@@ -141,6 +141,13 @@ public class MainForm : Form {
         }
         if (m.Msg == 0x84) { int h = HitEdge(m.LParam); if (h != 0) { m.Result = (IntPtr)h; return; } }
         base.WndProc(ref m);
+        if (m.Msg == 0x24) { // WM_GETMINMAXINFO: massimizzata non copre la barra delle applicazioni
+            try {
+                var sc = Screen.FromHandle(Handle); var wa = sc.WorkingArea; var bd = sc.Bounds;
+                Marshal.WriteInt32(m.LParam, 8, wa.Width); Marshal.WriteInt32(m.LParam, 12, wa.Height);
+                Marshal.WriteInt32(m.LParam, 16, wa.Left - bd.Left); Marshal.WriteInt32(m.LParam, 20, wa.Top - bd.Top);
+            } catch { }
+        }
     }
 
     // Bordi per ridimensionare: valgono anche sopra i pannelli figli (vedi Canvas/Btn, che restituiscono HTTRANSPARENT)
@@ -225,11 +232,15 @@ public class MainForm : Form {
         if (s.UpdateAvailable) return "Aggiorna";
         if (s.Installed) return "Avvia";
         if (s.CanDownload) return "Installa";
-        return s.Checked ? "Non disponibile" : "Controllo…";
+        if (!s.Checked) return "Controllo…";
+        return CanRetry(s) ? "Riprova" : "In arrivo";
     }
+    // errore di rete o limite di GitHub: si può ricontrollare; release assente: no
+    static bool CanRetry(AppState s) { return s.Checked && !s.CanDownload && !s.Installed && s.Error != null && s.Error.IndexOf("Nessuna versione", StringComparison.Ordinal) < 0; }
     bool ActionEnabled(AppState s) {
         if (s.Busy) return false;
         if (s.Installed && !s.UpdateAvailable) return true;
+        if (CanRetry(s)) return !AnyBusy && checking == 0;
         return s.CanDownload && !AnyBusy; // un installer alla volta
     }
 
@@ -242,6 +253,7 @@ public class MainForm : Form {
             catch (Exception e) { SetStatus("Avvio non riuscito: " + e.Message, -1); }
             return;
         }
+        if (CanRetry(s)) { RefreshAll(true); return; }
         if (s.CanDownload && !AnyBusy) Run(s, null);
     }
 
@@ -326,8 +338,12 @@ public class MainForm : Form {
                 Interlocked.Decrement(ref checking);
                 if (Interlocked.Decrement(ref left) == 0) {
                     int n = states.Count(x => x.UpdateAvailable);
-                    bool off = states.All(x => !x.Online);
-                    SetStatus(off ? "Nessuna connessione a GitHub" : n == 0 ? "Tutto aggiornato" : n == 1 ? "1 aggiornamento disponibile" : n + " aggiornamenti disponibili", -1);
+                    var failed = states.Where(x => x.Error != null).ToList();
+                    if (states.All(x => !x.Online)) SetStatus("Nessuna connessione a GitHub", -1);
+                    else if (n > 0) SetStatus(n == 1 ? "1 aggiornamento disponibile" : n + " aggiornamenti disponibili", -1);
+                    else if (failed.Count == states.Count) SetStatus(failed[0].Error, -1);
+                    else if (failed.Count > 0) SetStatus("Controllo completato, con avvisi per: " + string.Join(", ", failed.Select(x => x.Def.Name).ToArray()), -1);
+                    else SetStatus("Tutto aggiornato", -1);
                 }
                 RefreshUi();
             });
@@ -407,7 +423,7 @@ public class MainForm : Form {
         if (s.UpdateAvailable) { dot = Th.Amber; return "Da aggiornare a " + s.LatestVersion; }
         if (s.Installed) { dot = Th.Green; return s.InstalledVersion != null ? "Installato · " + s.InstalledVersion : "Installato"; }
         if (s.CanDownload) { dot = Th.Faint; return "Non installato"; }
-        dot = Th.Faint; return s.Checked ? "Non disponibile" : "Controllo…";
+        dot = Th.Faint; return !s.Checked ? "Controllo…" : CanRetry(s) ? "Controllo non riuscito" : "Non ancora pubblicato";
     }
 
     // ---------- disegno: barra di stato ----------

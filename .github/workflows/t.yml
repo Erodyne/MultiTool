@@ -15,6 +15,9 @@ jobs:
           using System; using System.Runtime.InteropServices;
           public class W { [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, int m, IntPtr w, IntPtr l);
             [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+            [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+            [DllImport("user32.dll")] public static extern void mouse_event(int f, int x, int y, int d, int e);
+            [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
             public struct RECT { public int L, T, R, B; } }
           "@
           function Shot($n) { $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds; $bmp = New-Object Drawing.Bitmap $b.Width, $b.Height
@@ -26,6 +29,11 @@ jobs:
           [W]::SendMessage($h, 0x112, [IntPtr]0xF030, [IntPtr]::Zero) | Out-Null; Start-Sleep 3
           $r = New-Object W+RECT; [W]::GetWindowRect($h, [ref]$r) | Out-Null
           "massimizzata: $($r.L),$($r.T),$($r.R),$($r.B)  area: $([Windows.Forms.Screen]::PrimaryScreen.WorkingArea)"; Shot max
+          [W]::SendMessage($h, 0x112, [IntPtr]0xF120, [IntPtr]::Zero) | Out-Null; Start-Sleep 2
+          [W]::SetForegroundWindow($h) | Out-Null
+          [W]::GetWindowRect($h, [ref]$r) | Out-Null
+          [W]::SetCursorPos($r.L + 130, $r.T + 46 + 166 + 29) | Out-Null; [W]::mouse_event(2,0,0,0,0); [W]::mouse_event(4,0,0,0,0); Start-Sleep 3
+          "dopo ripristino: $($r.L),$($r.T),$($r.R),$($r.B)"; Shot app
           Get-Content "$env:APPDATA\ErodyneSuite\errori.log" -ErrorAction SilentlyContinue
           Stop-Process $p -Force -ErrorAction SilentlyContinue
       - shell: pwsh
