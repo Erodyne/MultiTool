@@ -23,6 +23,8 @@ public static class Catalog {
     // Chiave pubblica di firma delle release (XML RSA, da Strumenti\Firma-Release.ps1 -NuovaChiave).
     // Vuota: gli installer non firmati partono solo dopo la conferma dell'utente, con impronta visibile.
     // Impostata: parte solo un installer con "<file>.sig" valido; un account GitHub rubato non basta più.
+    // La firma copre programma + versione + impronta: non si può spacciare l'installer di un programma
+    // per un altro, né ripubblicare una vecchia versione vulnerabile con un numero più alto.
     public const string ReleaseKey = "";
     public static readonly List<AppDef> Apps = new List<AppDef>();
 
@@ -39,7 +41,7 @@ public static class Catalog {
                 "Installa i tuoi programmi scegliendoli da un elenco",
                 "Pulisce, ripara e controlla hardware, sicurezza e rete" },
             C1 = Color.FromArgb(0x7C, 0x5C, 0xFF), C2 = Color.FromArgb(0x22, 0xD3, 0xEE),
-            Repo = "Erodyne/MultiTool", AssetPattern = @"^MultiTool-Setup-.*\.exe$",
+            Repo = "Erodyne/MultiTool", AssetPattern = @"^MultiTool-Setup-[0-9A-Za-z._-]{0,40}\.exe$",
             ExeName = "MultiTool.exe", SilentArgs = "/S", AdminInstall = true,
             UninstallHive = Hive.Machine, UninstallKeys = new[] { "MultiTool" },
             DefaultDirs = new[] { Path.Combine(PF, "MultiTool") }
@@ -52,7 +54,7 @@ public static class Catalog {
                 "Conferma con ID verificato e avviso anti-truffa",
                 "Relay tuo: Windows, Linux o Raspberry" },
             C1 = Color.FromArgb(0x22, 0xD3, 0xEE), C2 = Color.FromArgb(0x34, 0xD3, 0x99),
-            Repo = "Erodyne/Remostation", AssetPattern = @"^Remostation-Setup.*\.exe$",
+            Repo = "Erodyne/Remostation", AssetPattern = @"^Remostation-Setup[0-9A-Za-z._-]{0,40}\.exe$",
             ExeName = "remostation.exe", SilentArgs = "/S", AdminInstall = true,
             UninstallHive = Hive.Machine, UninstallKeys = new[] { "Remostation" },
             DefaultDirs = new[] { Path.Combine(PF, "Remostation") }
@@ -65,7 +67,7 @@ public static class Catalog {
                 "Live a bassa latenza, taglio preciso al fotogramma",
                 "Restauro VHS, normalizzazione ed esportazione" },
             C1 = Color.FromArgb(0xA7, 0x8B, 0xFA), C2 = Color.FromArgb(0xF8, 0x71, 0x71),
-            Repo = "Erodyne/AcquisizioneVideo", AssetPattern = @"^AcquisizioneVideo-Setup.*\.exe$",
+            Repo = "Erodyne/AcquisizioneVideo", AssetPattern = @"^AcquisizioneVideo-Setup[0-9A-Za-z._-]{0,40}\.exe$",
             ExeName = "Acquisizione.exe", SilentArgs = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART", AdminInstall = false,
             UninstallHive = Hive.User, UninstallKeys = new[] { "AcquisizioneVideo", "{6F6B2C1E-3A2D-4C8E-9B57-AC0E5D0F1A06}_is1" },
             DefaultDirs = new[] { Path.Combine(LAD, @"Programs\AcquisizioneVideo") }

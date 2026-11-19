@@ -18,6 +18,12 @@ public class AppState {
     public string Error, Progress;
     public double Percent = -1;
 
+    // Copia dei dati della release al momento del clic: un controllo che finisce durante
+    // il download non può cambiare file, impronta o firma a metà installazione.
+    public AppState Snapshot() {
+        return new AppState { Def = Def, LatestVersion = LatestVersion, AssetUrl = AssetUrl, AssetName = AssetName, ShaUrl = ShaUrl, SigUrl = SigUrl, ExePath = ExePath, InstalledVersion = InstalledVersion };
+    }
+
     public bool Installed { get { return ExePath != null; } }
     public bool CanDownload { get { return AssetUrl != null; } }
     public bool UpdateAvailable {
@@ -239,6 +245,8 @@ public static class Manager {
             p.Lock.Position = 0;
             if (p.Hash != lastHash) throw new Exception("il file è stato modificato dopo il download");
             p.Signed = VerifySignature(s, p.Hash, progress);
+            if (p.Signed && s.InstalledVersion != null && Ver.Newer(s.InstalledVersion, s.LatestVersion))
+                throw new Exception("la release è più vecchia della versione installata: installazione bloccata");
         } catch { p.Dispose(); throw; }
         return p;
     }
@@ -253,13 +261,18 @@ public static class Manager {
         progress(-1, "Verifica della firma");
         byte[] sig;
         try { sig = Convert.FromBase64String(HttpGet(s.SigUrl).Trim()); } catch (FormatException) { throw new Exception("firma non leggibile"); }
-        var h = new byte[32];
-        for (int i = 0; i < 32; i++) h[i] = Convert.ToByte(hash.Substring(i * 2, 2), 16);
+        var h = SignedMessageHash(s.Def.Id, s.LatestVersion, hash);
         using (var rsa = new RSACryptoServiceProvider()) {
             rsa.FromXmlString(Catalog.ReleaseKey);
             if (!rsa.VerifyHash(h, CryptoConfig.MapNameToOID("SHA256"), sig)) throw new Exception("firma NON valida: il file non viene dal suo autore");
         }
         return true;
+    }
+
+    // Messaggio firmato: "erodyne-release-1|<programma>|<versione>|<sha256 del file>"
+    public static byte[] SignedMessageHash(string id, string version, string fileHash) {
+        var msg = "erodyne-release-1|" + id + "|" + Ver.Clean(version) + "|" + fileHash.ToLowerInvariant();
+        using (var sha = SHA256.Create()) return sha.ComputeHash(Encoding.UTF8.GetBytes(msg));
     }
 
     static string Download(AppState s, Action<double, string> progress) {

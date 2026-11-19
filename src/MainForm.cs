@@ -192,7 +192,7 @@ public class MainForm : Form {
         if (InvokeRequired) { BeginInvoke((Action)RefreshUi); return; }
         int upd = states.Count(x => x.UpdateAvailable);
         hUpdateAll.Text = upd > 0 ? "Aggiorna tutto (" + upd + ")" : "Tutto aggiornato";
-        hUpdateAll.Enabled = upd > 0 && !AnyBusy;
+        hUpdateAll.Enabled = upd > 0 && !AnyBusy && checking == 0;
         hCheck.Enabled = !AnyBusy && checking == 0;
         for (int i = 0; i < states.Count; i++) {
             var s = states[i];
@@ -243,7 +243,7 @@ public class MainForm : Form {
         if (s.Busy) return false;
         if (s.Installed && !s.UpdateAvailable) return true;
         if (CanRetry(s)) return !AnyBusy && checking == 0;
-        return s.CanDownload && !AnyBusy; // un installer alla volta
+        return s.CanDownload && !AnyBusy && checking == 0; // un installer alla volta, mai durante un controllo
     }
 
     // ---------- azioni ----------
@@ -256,19 +256,20 @@ public class MainForm : Form {
             return;
         }
         if (CanRetry(s)) { RefreshAll(true); return; }
-        if (s.CanDownload && !AnyBusy) Run(s, null);
+        if (s.CanDownload && !AnyBusy && checking == 0) Run(s, null);
     }
 
     void Run(AppState s, Action done) {
+        var job = s.Snapshot();
         s.Busy = true; s.Percent = 0; s.Error = null;
         bool update = s.Installed;
         RefreshUi();
         ThreadPool.QueueUserWorkItem(_ => {
             string msg; Manager.Payload file = null;
             try {
-                file = Manager.Fetch(s, (p, t) => { s.Percent = p; SetStatus(s.Def.Name + ": " + t, p); RefreshUi(); });
+                file = Manager.Fetch(job, (p, t) => { s.Percent = p; SetStatus(s.Def.Name + ": " + t, p); RefreshUi(); });
                 s.Percent = -1;
-                if (!file.Signed && !ConfirmUnsigned(s, file.Hash)) throw new OperationCanceledException();
+                if (!file.Signed && !ConfirmUnsigned(job, file.Hash)) throw new OperationCanceledException();
                 SetStatus(s.Def.Name + ": installazione in corso…", -1); RefreshUi();
                 int code = Manager.RunInstaller(s, file);
                 Manager.DetectLocal(s);
@@ -304,7 +305,7 @@ public class MainForm : Form {
 
     void UpdateAll() {
         var list = states.Where(x => x.UpdateAvailable && !x.Busy).ToList();
-        if (list.Count == 0) return;
+        if (list.Count == 0 || checking > 0) return;
         queueRunning = true;
         int i = 0;
         Action next = null;
