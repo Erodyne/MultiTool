@@ -4,7 +4,10 @@ public static class T {
         var s = new AppState { Def = Catalog.Apps.First(a => a.Id == "multitool") };
         Manager.CheckOnline(s);
         Console.WriteLine("check: ver=" + s.LatestVersion + " asset=" + s.AssetName + " err=" + s.Error);
-        if (s.AssetUrl == null) return;
+        if (s.AssetUrl == null) { // limite di GitHub sul runner: release nota
+            s.AssetName = "MultiTool-Setup-2026.11.15.2.exe";
+            s.AssetUrl = "https://github.com/Erodyne/MultiTool/releases/download/v2026.11.15.2/MultiTool-Setup-2026.11.15.2.exe";
+        }
         using (var p = Manager.Fetch(s, (x, t) => { })) {
             Console.WriteLine("fetch: " + p.File + " hash=" + p.Hash + " signed=" + p.Signed);
             try { File.WriteAllText(p.File, "x"); Console.WriteLine("SOVRASCRITTO (male)"); } catch (Exception e) { Console.WriteLine("scrittura bloccata: " + e.GetType().Name); }

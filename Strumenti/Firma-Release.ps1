@@ -1,4 +1,4 @@
-<#
+﻿<#
   Firma delle release per Erodyne Suite (RSA 3072, SHA-256).
 
   1) Una volta sola:   .\Firma-Release.ps1 -NuovaChiave
@@ -10,7 +10,7 @@
 param([switch]$NuovaChiave, [string]$File, [string]$Chiave = "$PSScriptRoot\erodyne-firma-PRIVATA.xml")
 $ErrorActionPreference = 'Stop'
 if ($NuovaChiave) {
-    if (Test-Path $Chiave) { throw "Esiste già $Chiave: non sovrascrivo una chiave in uso." }
+    if (Test-Path $Chiave) { throw "Esiste già ${Chiave}: non sovrascrivo una chiave in uso." }
     $rsa = New-Object Security.Cryptography.RSACryptoServiceProvider 3072
     $rsa.PersistKeyInCsp = $false
     Set-Content -Path $Chiave -Value $rsa.ToXmlString($true) -Encoding ascii
