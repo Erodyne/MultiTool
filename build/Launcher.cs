@@ -13,7 +13,7 @@ class Program {
     static void Msg(string t) { MessageBoxW(IntPtr.Zero, t, "MultiTool", 0x30); }
     static string JoinArgs(string[] a) {
         var r = new System.Text.StringBuilder();
-        foreach (var x in a) { if (r.Length > 0) r.Append(' '); r.Append(x.IndexOfAny(new[] { ' ', '\t', '"' }) >= 0 ? "\"" + x.Replace("\"", "\\\"") + "\"" : x); }
+        foreach (var x in a) { if (r.Length > 0) r.Append(' '); r.Append(x.Length > 0 && x.IndexOfAny(new[] { ' ', '\t', '"' }) < 0 ? x : "\"" + System.Text.RegularExpressions.Regex.Replace(System.Text.RegularExpressions.Regex.Replace(x, @"(\\*)""", @"$1$1\"""), @"(\\+)$", "$1$1") + "\""); }
         return r.ToString();
     }
     [STAThread]

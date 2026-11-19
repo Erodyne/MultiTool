@@ -3,7 +3,7 @@
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.15.2'
+$AppVersion = '2026.11.19.1'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
@@ -249,6 +249,7 @@ function Set-ExitResult($it, $code, [string]$okText) {
     elseif ($code -in 1602, 1223) { Set-It $it 'skip' 'Annullato dall''utente' }
     elseif ($code -eq 1618)       { Set-It $it 'err' 'Un''altra installazione è in corso' }
     elseif ($code -eq 1638)       { Set-It $it 'ok' 'Già installata un''altra versione' }
+    elseif ($code -eq 1605)       { Set-It $it 'ok' 'Non più presente' }
     elseif ($code -in 1619, 1620) { Set-It $it 'err' 'Pacchetto non leggibile o danneggiato' }
     elseif ($code -eq 1625)       { Set-It $it 'err' 'Bloccato dai criteri di sistema' }
     elseif ($code -eq 1603)       { Set-It $it 'err' 'Errore grave dell''installer (dettagli in Dati\Logs)' }
@@ -1279,7 +1280,7 @@ function New-SensorHistory {
     $f = Join-Path $DataDir 'sensori.csv'
     if (-not (Test-Path $f)) { return @{ Msg = 'Nessun dato: attiva "Registra temperature e ventole" in Impostazioni o tieni aperta la sezione Hardware' } }
     $since = (Get-Date).AddHours(-48)
-    $data = Import-Csv $f -Delimiter ';' -Header T, G, N, K, V -Encoding UTF8 | Where-Object { [datetime]$_.T -ge $since }
+    $data = Import-Csv $f -Delimiter ';' -Header T, G, N, K, V -Encoding UTF8 | Where-Object { $ok = $false; try { $ok = [datetime]$_.T -ge $since -and $_.V } catch {}; $ok }
     if (-not $data) { return @{ Msg = 'Nessun dato nelle ultime 48 ore' } }
     $groups = $data | Group-Object { "$($_.G) · $($_.N)" } | Sort-Object { ($_.Group | Select-Object -First 1).K }, Name | Select-Object -First 16
     $colors = '#7C5CFF', '#22D3EE', '#F87171', '#FBBF24', '#34D399', '#F472B6', '#60A5FA', '#A3E635'
@@ -4773,7 +4774,10 @@ Invoke-Each $items {
             if ((Get-ItemProperty $k).EnableLUA -eq 0) { Set-ItemProperty $k -Name EnableLUA -Value 1 -Type DWord; $sync.Reboot = $true }
             Set-ItemProperty $k -Name ConsentPromptBehaviorAdmin -Value 5 -Type DWord; Set-ItemProperty $k -Name PromptOnSecureDesktop -Value 1 -Type DWord
         }
-        'admin'   { Get-LocalUser | Where-Object { $_.SID -like '*-500' } | Disable-LocalUser -ErrorAction Stop }
+        'admin'   {
+            if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -like '*-500') { Set-It $it 'skip' 'Stai usando proprio questo account: crea prima un altro amministratore'; return }
+            Get-LocalUser | Where-Object { $_.SID -like '*-500' } | Disable-LocalUser -ErrorAction Stop
+        }
         'smb1'    { Disable-WindowsOptionalFeature -Online -FeatureName SMB1Protocol -NoRestart -ErrorAction Stop | Out-Null; $sync.Reboot = $true }
         'rdp'     { Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 1 -Type DWord }
         'smartscreen' {
@@ -4904,7 +4908,7 @@ foreach ($x in $list | Sort-Object Ram -Descending | Select-Object -First 80) {
     try { $path = $p.Path; $desc = $p.MainModule.FileVersionInfo.FileDescription } catch {}
     $isCrit = ($crit -contains $p.ProcessName) -or $p.Id -eq $PID -or $p.SessionId -eq 0
     $rows.Add((New-Row @{ Name = $(if ($desc) { "$desc ($($p.ProcessName))" } else { $p.ProcessName }); Sub = $(if ($path) { $path } else { "PID $($p.Id)" })
-        Key = [string]$p.Id; C1 = (Format-Size $x.Ram); C2 = ('{0:N1} %' -f $x.Cpu); Checkable = (-not $isCrit)
+        Key = [string]$p.Id; Data = [string]$p.ProcessName; C1 = (Format-Size $x.Ram); C2 = ('{0:N1} %' -f $x.Cpu); Checkable = (-not $isCrit)
         Tag = $(if ($isCrit) { 'sistema' } elseif ($x.Cpu -ge 25) { 'CPU alta' } elseif ($x.Ram -ge 1GB) { 'RAM alta' } else { '' })
         TagKind = $(if ($isCrit) { 'none' } else { 'warn' }) })) | Out-Null
 }
@@ -4912,7 +4916,12 @@ $sync.ScanInfo = 'Gli 80 processi che usano più memoria. Quelli di sistema non 
 '@
 
 $ActProcesses = @'
-Invoke-Each $items { param($it) Stop-Process -Id ([int]$it.Key) -Force -ErrorAction Stop; Set-It $it 'ok' 'Terminato' } 'Termino'
+Invoke-Each $items {
+    param($it)
+    $p = Get-Process -Id ([int]$it.Key) -ErrorAction SilentlyContinue
+    if (-not $p -or ($it.Data -and $p.ProcessName -ne [string]$it.Data)) { Set-It $it 'skip' 'Già chiuso'; return }
+    Stop-Process -Id $p.Id -Force -ErrorAction Stop; Set-It $it 'ok' 'Terminato'
+} 'Termino'
 '@
 
 $ScanBigFiles = @'
@@ -5643,7 +5652,7 @@ function Start-Sensors {
     Start-Bg $SensCode @{ gen = $sync.SensGen; useLhm = $useLhm }
 }
 function New-HwCard($c) {
-    $E = { param($t) [Security.SecurityElement]::Escape([string]$t) }
+    $E = { param($t) [Security.SecurityElement]::Escape(([string]$t -replace '[\x00-\x08\x0B\x0C\x0E-\x1F]', '')) }
     $rd = ($c.Rows | ForEach-Object { '<RowDefinition Height="Auto"/>' }) -join ''
     $i = 0
     $cells = foreach ($r in $c.Rows) {
