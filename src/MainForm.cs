@@ -39,8 +39,10 @@ public class MainForm : Form {
         Text = "Erodyne Suite";
         FormBorderStyle = FormBorderStyle.None;
         BackColor = Th.Bg; ForeColor = Th.Text;
-        MinimumSize = new Size(1080, 700);
-        Size = new Size(1180, 760);
+        // su schermi piccoli la finestra non deve uscire dall'area di lavoro
+        var wa = Screen.PrimaryScreen.WorkingArea;
+        MinimumSize = new Size(Math.Min(1000, wa.Width), Math.Min(640, wa.Height));
+        Size = new Size(Math.Min(1180, wa.Width), Math.Min(760, wa.Height));
         StartPosition = FormStartPosition.CenterScreen;
         DoubleBuffered = true;
         Padding = new Padding(1);
@@ -338,10 +340,10 @@ public class MainForm : Form {
                 Interlocked.Decrement(ref checking);
                 if (Interlocked.Decrement(ref left) == 0) {
                     int n = states.Count(x => x.UpdateAvailable);
-                    var failed = states.Where(x => x.Error != null).ToList();
+                    var failed = states.Where(x => x.Error != null && !x.Error.StartsWith("Nessuna versione")).ToList();
                     if (states.All(x => !x.Online)) SetStatus("Nessuna connessione a GitHub", -1);
                     else if (n > 0) SetStatus(n == 1 ? "1 aggiornamento disponibile" : n + " aggiornamenti disponibili", -1);
-                    else if (failed.Count == states.Count) SetStatus(failed[0].Error, -1);
+                    else if (failed.Count > 0 && failed.Count == states.Count(x => x.Error != null) && states.All(x => x.Error != null)) SetStatus(failed[0].Error, -1);
                     else if (failed.Count > 0) SetStatus("Controllo completato, con avvisi per: " + string.Join(", ", failed.Select(x => x.Def.Name).ToArray()), -1);
                     else SetStatus("Tutto aggiornato", -1);
                 }
@@ -459,7 +461,10 @@ public class MainForm : Form {
                 var r = new RectangleF(M + i * (cw + gap), top, cw, ch);
                 cards.Add(r);
                 int bx = (int)r.X + 20, by = (int)r.Bottom - 60, inner = (int)r.Width - 40;
-                cardMain[i].SetBounds(bx, by, inner - 112, 40);
+                // schede strette: solo il pulsante principale (i dettagli restano nella barra a sinistra)
+                bool narrow = inner < 240;
+                cardMore[i].Visible = !narrow;
+                cardMain[i].SetBounds(bx, by, narrow ? inner : inner - 112, 40);
                 cardMore[i].SetBounds(bx + inner - 102, by, 102, 40);
             }
         } else {
