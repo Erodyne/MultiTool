@@ -226,6 +226,9 @@ function Get-WingetResult([int]$Code, [string]$OkText) {
         '0x8A15010F' { return 'err', 'Bloccato dai criteri aziendali' }
         '0x8A150011' { return 'err', 'File scaricato non valido (hash diverso)' }
         '0x8A150010' { return 'err', 'Nessun installer adatto a questo PC' }
+        '0x80004004' { return 'err', 'Installazione interrotta: riprova' }
+        '0x8A15000F' { return 'err', 'Origine winget non raggiungibile: controlla la connessione' }
+        '0x8A150044' { return 'err', 'Origine winget non raggiungibile: controlla la connessione' }
     }
     if ($Code -in 3010, 1641) { $sync.Reboot = $true; return 'ok', 'Riavvio richiesto' }
     return 'err', "Errore $hex"
@@ -308,7 +311,8 @@ function Save-Settings {
     $disk = Read-Json 'settings.json' $null
     foreach ($k in 'LastBackup', 'LastAutoRun') {
         $dv = if ($disk) { [string]$disk.$k } else { '' }; $mv = [string]$Settings.$k
-        if ($dv -and (-not $mv -or [datetime]$dv -gt [datetime]$mv)) { $Settings | Add-Member -NotePropertyName $k -NotePropertyValue $dv -Force }
+        $newer = $false; try { $newer = $dv -and (-not $mv -or [datetime]$dv -gt [datetime]$mv) } catch {}
+        if ($newer) { $Settings | Add-Member -NotePropertyName $k -NotePropertyValue $dv -Force }
     }
     Save-Json 'settings.json' $Settings
 }
@@ -789,7 +793,7 @@ function Get-HwInventory {
     $cpuOk = $null
     if ($cpuName -match 'Core\(TM\) Ultra|Core Ultra|Snapdragon') { $cpuOk = $true }
     elseif ($cpuName -match 'i[3579]-(\d{4,5})') { $nn = $Matches[1]; $gen = if ($nn.Length -eq 5 -or $nn.StartsWith('1')) { [int]$nn.Substring(0, 2) } else { [int]$nn.Substring(0, 1) }; $cpuOk = $gen -ge 8 }
-    elseif ($cpuName -match 'Ryzen\s+(?:Threadripper\s+)?(?:\d\s+)?(?:PRO\s+)?(\d)\d{3}') { $g1 = [int]$Matches[1]; $cpuOk = if ($g1 -ge 3) { $true } elseif ($g1 -eq 1) { $false } else { $null } }
+    elseif ($cpuName -match 'Ryzen\s+(?:Threadripper\s+)?(?:\d\s+)?(?:PRO\s+)?(\d)\d{3}') { $g1 = [int]$Matches[1]; $cpuOk = if ($g1 -ge 2) { $true } else { $false } }
     elseif ($cpuName -match 'Core\(TM\)2|Pentium\(R\) (Dual|D|4)|Athlon|Phenom|FX-') { $cpuOk = $false }
     $tpm2 = $false
     try { $tt = Get-CimInstance -Namespace root\cimv2\security\microsofttpm -ClassName Win32_Tpm -ErrorAction Stop; $tpm2 = ([string]$tt.SpecVersion -split ',')[0].Trim() -like '2.*' } catch {}
@@ -986,9 +990,9 @@ function Get-PcIdentity {
     $cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name -replace '\s+', ' '
     $disks = (Get-PhysicalDisk -ErrorAction SilentlyContinue | ForEach-Object { "$($_.FriendlyName) $(Format-Size $_.Size)" }) -join ' + '
     $sn = "$($bios.SerialNumber)".Trim()
-    if (-not $sn -or $sn -match '(?i)^(to be filled|default|system serial|0+|none|n/?a|123456789|O\.E\.M\.|chassis serial)') {
+    if (-not $sn -or $sn -match '(?i)^(to be filled|default( string)?\s*$|system serial|0+\s*$|none\s*$|n/?a\s*$|123456789|O\.E\.M\.|chassis serial)') {
         $bb = "$((Get-CimInstance Win32_BaseBoard).SerialNumber)".Trim()
-        $sn = if ($bb -and $bb -notmatch '(?i)^(to be filled|default|0+|none|n/?a|base board serial)') { $bb } else { $env:COMPUTERNAME }
+        $sn = if ($bb -and $bb -notmatch '(?i)^(to be filled|default( string)?\s*$|0+\s*$|none\s*$|n/?a\s*$|base board serial)') { $bb } else { $env:COMPUTERNAME }
     }
     [pscustomobject]@{ Maker = "$($cs.Manufacturer)".Trim(); Model = "$($cs.Model)".Trim(); Serial = $sn
         Cpu = $cpu.Trim(); Ram = Format-Size $cs.TotalPhysicalMemory; Disks = $disks
@@ -1051,7 +1055,7 @@ $(Get-JsLib 'qrcode.js' 'https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dis
 <b>$(& $E "$($id.Maker) $($id.Model)")</b><br>S/N: $(& $E $id.Serial)<br>$(& $E $id.Cpu)<br>RAM $(& $E $id.Ram)<br>
 Vendita: $(Get-Date -Format 'dd/MM/yyyy')  ·  Garanzia: $exp<br><span class="f">$(& $E ((@($S.ShopPhone, $S.ShopEmail) | Where-Object { $_ }) -join '  ·  '))</span></div><div id="q"></div></div>
 <div class="np"><button onclick="window.print()">Stampa</button> <span class="f">$(Tr 'Formato 90 × 50 mm, da stampare su carta adesiva.')</span></div>
-<script>qrcode.stringToBytes=qrcode.stringToBytesFuncs['UTF-8'];var q=qrcode(0,'M');q.addData($(ConvertTo-Json $qr) .replace(/<\/script/gi,''),'Byte');q.make();document.getElementById('q').innerHTML=q.createSvgTag({cellSize:4,margin:0,scalable:true});</script></body></html>
+<script>qrcode.stringToBytes=qrcode.stringToBytesFuncs['UTF-8'];var q=qrcode(0,'M');q.addData($((ConvertTo-Json $qr) -replace '</', '<\/'),'Byte');q.make();document.getElementById('q').innerHTML=q.createSvgTag({cellSize:4,margin:0,scalable:true});</script></body></html>
 "@
     $dir = Join-Path $DataDir 'Rapporti'; New-Item -ItemType Directory -Path $dir -Force | Out-Null
     $file = Join-Path $dir ("Etichetta-{0}.html" -f ($id.Serial -replace '[^\w-]', ''))
@@ -1125,10 +1129,13 @@ function Test-Ping([string]$HostName) {
 }
 function Measure-Download([int]$Seconds = 12) {
     $req = [Net.HttpWebRequest]::Create('https://speed.cloudflare.com/__down?bytes=200000000'); $req.Timeout = 15000; $req.ReadWriteTimeout = 10000
-    $resp = $req.GetResponse(); $st = $resp.GetResponseStream(); $buf = New-Object byte[] 65536
-    $sw = [Diagnostics.Stopwatch]::StartNew(); $tot = 0
-    while ($sw.Elapsed.TotalSeconds -lt $Seconds) { $n = $st.Read($buf, 0, $buf.Length); if ($n -le 0) { break }; $tot += $n }
-    $sw.Stop(); $resp.Close()
+    $resp = $req.GetResponse()
+    try {
+        $st = $resp.GetResponseStream(); $buf = New-Object byte[] 65536
+        $sw = [Diagnostics.Stopwatch]::StartNew(); $tot = 0
+        while ($sw.Elapsed.TotalSeconds -lt $Seconds) { $n = $st.Read($buf, 0, $buf.Length); if ($n -le 0) { break }; $tot += $n }
+        $sw.Stop()
+    } finally { $resp.Close() }
     [math]::Round($tot * 8 / $sw.Elapsed.TotalSeconds / 1e6, 1)
 }
 function Measure-Upload([int]$MB = 15) {
@@ -1166,8 +1173,8 @@ function New-JobSheet {
     $hp = Join-Path $DataDir 'history.jsonl'
     if (Test-Path $hp) {
         foreach ($l in Get-Content $hp -Tail 3000 -Encoding UTF8) {
-            try { $h = $l | ConvertFrom-Json } catch { continue }
-            if (([datetime]$h.Time).Date -eq (Get-Date).Date -and $h.Kind -eq 'ok') { $ops += "$($h.Area): $($h.Name)" }
+            try { $h = $l | ConvertFrom-Json; $hd = ([datetime]$h.Time).Date } catch { continue }
+            if ($hd -eq (Get-Date).Date -and $h.Kind -eq 'ok') { $ops += "$($h.Area): $($h.Name)" }
         }
     }
     $ops = @($ops | Select-Object -Unique | Select-Object -Last 40)
@@ -2516,7 +2523,7 @@ function Invoke-AutoSleep($S) {
     try {
         $l = New-Object NativeIdle.Idle+LII; $l.cbSize = 8
         [void][NativeIdle.Idle]::GetLastInputInfo([ref]$l)
-        $idleMin = ([Environment]::TickCount - $l.dwTime) / 60000
+        $idleMin = ((([long][Environment]::TickCount -band 0xFFFFFFFFL) - [long]$l.dwTime + 0x100000000L) % 0x100000000L) / 60000
         $woke = $false
         try { $w = Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Power-Troubleshooter'; Id = 1 } -MaxEvents 1 -ErrorAction Stop; $woke = $w.TimeCreated -gt $AutoStart.AddMinutes(-20) } catch {}
         if ($woke -and $idleMin -ge 15) { Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.Application]::SetSuspendState('Suspend', $false, $false) }
@@ -2583,7 +2590,7 @@ if ($Auto) {
             $x = Invoke-Winget 'upgrade' $c[1] $src
             $k, $txt = Get-WingetResult $x.Code 'Aggiornato'
             Add-History 'Automatico' $c[0] $txt $k
-            if ($k -eq 'ok') { $ok++ } else { $err++ }
+            if ($k -eq 'ok') { $ok++ } elseif ($k -ne 'skip') { $err++ }
         }
         $msg = if ($ok + $err) { "$ok programmi aggiornati" + $(if ($err) { ", $err con errori" } else { '' }) } else { 'Nessun aggiornamento disponibile' }
     } catch { $msg = "Errore: $($_.Exception.Message)" }
@@ -2607,7 +2614,7 @@ if ($Backup) {
         $r = Invoke-BackupEntry $f $root
         if ($r.Suspect) { $sus += $f.Name } elseif ($r.Code -lt 8) { $n += [Math]::Max(0, $r.Copied) } else { $err++ }
     }
-    $S2 = Get-Settings; $S2 | Add-Member -NotePropertyName LastBackup -NotePropertyValue (Get-Date).ToString('s') -Force; Save-Json 'settings.json' $S2
+    if (-not $err -and -not $sus) { $S2 = Get-Settings; $S2 | Add-Member -NotePropertyName LastBackup -NotePropertyValue (Get-Date).ToString('s') -Force; Save-Json 'settings.json' $S2 }
     Add-History 'Backup automatico' $root $(if ($sus) { "Sospeso: $($sus -join ', ')" } elseif ($err) { "$err errori" } else { "$n file copiati" }) $(if ($err -or $sus) { 'err' } else { 'ok' })
     if ($sus) { Show-Toast 'MultiTool - Backup sospeso' "Troppi file modificati insieme in: $($sus -join ', '). Potrebbe essere un virus: controlla prima di continuare." }
     else { Show-Toast 'MultiTool - Backup' $(if ($err) { "Backup completato con $err errori" } else { "Backup completato: $n file nuovi o modificati" }) }
@@ -4038,6 +4045,7 @@ foreach ($t in ConvertFrom-WingetTable $r.Out -FirstOnly) {
         Checkable = (-not $cut); Status = $(if ($cut) { 'ID troncato' } else { '' }); StatusKind = $(if ($cut) { 'skip' } else { 'none' }) }))
 }
 $n = $rows.Count
+if (-not $n -and $r.Code -ne 0 -and ('0x{0:X8}' -f $r.Code) -ne '0x8A15002B') { throw ("winget non è riuscito a controllare gli aggiornamenti (codice 0x{0:X8}): controlla la connessione e riprova" -f $r.Code) }
 $sync.ScanInfo = if ($n) { "Trovati $n aggiornamenti. Controlla l'elenco, poi scegli se procedere. Per installare un programma nuovo scrivi il nome nella casella e premi Cerca." } else { $null }
 '@
 
@@ -4148,11 +4156,12 @@ $sync.Status = "Cerco `"$query`" nel catalogo…"
 $r = Invoke-Hidden (Get-WingetPath) ("search `"$query`" --accept-source-agreements --disable-interactivity") 120
 foreach ($t in ConvertFrom-WingetTable $r.Out) {
     $c = $t.Cols
-    $src = if ($c.Count -ge 4) { $c[-1] } else { '' }
+    $src = if ($c.Count -ge 4 -and $c[-1] -in 'winget', 'msstore') { $c[-1] } else { '' }
     $cut = $c[1] -match '…$'
-    $rows.Add((New-Row @{ RawName = $c[0]; Sub = $c[1]; Key = $c[1]; C1 = $c[2]; C2 = $(if ($c.Count -ge 5) { $c[3] } else { '' }); Tag = $src; Data = $src
+    $rows.Add((New-Row @{ RawName = $c[0]; Sub = $c[1]; Key = $c[1]; C1 = $c[2]; C2 = $(if ($c.Count -ge 5 -or ($c.Count -eq 4 -and -not $src)) { $c[3] } else { '' }); Tag = $src; Data = $src
         Checkable = (-not $cut); Status = $(if ($cut) { 'ID troncato' } else { '' }); StatusKind = $(if ($cut) { 'skip' } else { 'none' }) }))
 }
+if (-not $rows.Count -and $r.Code -ne 0 -and ('0x{0:X8}' -f $r.Code) -ne '0x8A150014') { throw ("winget non è riuscito a cercare (codice 0x{0:X8}): controlla la connessione e riprova" -f $r.Code) }
 $sync.ScanInfo = if ($rows.Count) { "$($rows.Count) risultati per `"$query`"." } else { $null }
 '@
 
@@ -4396,8 +4405,8 @@ if (Test-Path $p) {
     $lines = @(Get-Content $p -Encoding UTF8 -Tail 500)
     [array]::Reverse($lines)
     foreach ($l in $lines) {
-        try { $h = $l | ConvertFrom-Json } catch { continue }
-        $rows.Add((New-Row @{ Name = $h.Name; Sub = $h.Area; C1 = ([datetime]$h.Time).ToString('dd/MM/yy HH:mm'); Tag = $h.Result; TagKind = $h.Kind; Checkable = $false }))
+        try { $h = $l | ConvertFrom-Json; $hd = ([datetime]$h.Time).ToString('dd/MM/yy HH:mm') } catch { continue }
+        $rows.Add((New-Row @{ Name = $h.Name; Sub = $h.Area; C1 = $hd; Tag = $h.Result; TagKind = $h.Kind; Checkable = $false }))
     }
 }
 $sync.ScanInfo = if ($rows.Count) { "Ultime $($rows.Count) operazioni." } else { $null }
@@ -4624,7 +4633,7 @@ Invoke-Each $items {
     if ($r.Suspect) { Set-It $it 'err' 'Sospeso: troppi file modificati insieme (possibile virus)' }
     elseif ($r.Code -lt 8) { Set-It $it 'ok' $(if ($r.Copied -ge 0) { "$($r.Copied) file copiati" } else { 'Completato' }) } else { Set-It $it 'err' "Errore robocopy $($r.Code)" }
 } 'Copio'
-$sync.LastBackup = (Get-Date).ToString('s')
+if (-not @($items | Where-Object { $_.StatusKind -eq 'err' }).Count) { $sync.LastBackup = (Get-Date).ToString('s') }
 $sync.BackupSel = @($items | ForEach-Object { $_.Key })
 $sync.Extra = "Backup in $root"
 '@
@@ -4677,8 +4686,8 @@ if ($op -eq 'speed') {
     $sync.ExtraRows = New-Object System.Collections.ArrayList
     [void]$sync.ExtraRows.Add((New-Row @{ Name = 'Velocità download'; Sub = 'Server Cloudflare più vicino'; C1 = "$dl Mbit/s"; Checkable = $false; Status = 'Misurato'; StatusKind = 'ok'; Glyph = [string][char]0xE896 }))
     if ($ul) { [void]$sync.ExtraRows.Add((New-Row @{ Name = 'Velocità upload'; Sub = 'Server Cloudflare più vicino'; C1 = "$ul Mbit/s"; Checkable = $false; Status = 'Misurato'; StatusKind = 'ok'; Glyph = [string][char]0xE898 })) }
-    Add-History $area 'Test velocità' "$dl / $ul Mbit/s" 'ok'
-    $sync.Extra = "Download $dl Mbit/s  ·  upload $ul Mbit/s"
+    Add-History $area 'Test velocità' "$dl / $(if ($ul) { $ul } else { 'n.d.' }) Mbit/s" 'ok'
+    $sync.Extra = "Download $dl Mbit/s  ·  upload " + $(if ($ul) { "$ul Mbit/s" } else { 'non misurato' })
 } else {
     foreach ($c in @(@('ipconfig.exe', '/flushdns'), @('netsh.exe', 'winsock reset'), @('netsh.exe', 'int ip reset'), @('ipconfig.exe', '/release'), @('ipconfig.exe', '/renew'))) {
         $sync.Status = "Eseguo $($c[0]) $($c[1])…"
@@ -5536,7 +5545,7 @@ function Start-Action([string]$op) {
     if ($sync.Phase -eq 'run') { return }
     if ($State.Mode -in 'updates', 'wu', 'installers', 'catalog', 'profiles', 'import', 'full', 'deliver', 'packs' -and $op -ne 'skipver') {
         $free = (Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
-        if ($free -lt 5GB -and [MtTr]::Msg("Sul disco $env:SystemDrive restano solo $(Format-Size $free) liberi: aggiornamenti e installazioni potrebbero non riuscire. Conviene prima fare una Pulizia disco.`n`nContinuare comunque?", 'MultiTool', 'YesNo', 'Warning') -ne 'Yes') { return }
+        if ($null -ne $free -and $free -lt 5GB -and [MtTr]::Msg("Sul disco $env:SystemDrive restano solo $(Format-Size $free) liberi: aggiornamenti e installazioni potrebbero non riuscire. Conviene prima fare una Pulizia disco.`n`nContinuare comunque?", 'MultiTool', 'YesNo', 'Warning') -ne 'Yes') { return }
     }
     if ($M.PreCheck -and -not (& $M.PreCheck $op $sel)) { return }
     if ($M.ConfirmOp -and $M.ConfirmOp[$op]) {
@@ -5790,9 +5799,11 @@ function Export-ListCsv {
     if (-not $d.ShowDialog($win)) { return }
     $h = @($M.H)
     $Items | ForEach-Object {
-        $o = [ordered]@{}; $o[(T 'Nome')] = Protect-Csv $_.Name; $o[(T 'Dettaglio')] = Protect-Csv $_.Sub
-        if ($h[0]) { $o[(T $h[0])] = Protect-Csv $_.C1 }; if ($h[1]) { $o[(T $h[1])] = Protect-Csv $_.C2 }; if ($h[2]) { $o[(T $h[2])] = Protect-Csv $_.Tag }
-        $o[(T 'Esito')] = Protect-Csv $_.Status
+        $o = [ordered]@{}
+        $put = { param($k, $v) $kk = $k; $j = 2; while ($o.Contains($kk)) { $kk = "$k $j"; $j++ }; $o[$kk] = Protect-Csv $v }
+        & $put (T 'Nome') $_.Name; & $put (T 'Dettaglio') $_.Sub
+        if ($h[0]) { & $put (T $h[0]) $_.C1 }; if ($h[1]) { & $put (T $h[1]) $_.C2 }; if ($h[2]) { & $put (T $h[2]) $_.Tag }
+        & $put (T 'Esito') $_.Status
         [pscustomobject]$o
     } | Export-Csv -Path $d.FileName -Delimiter ';' -NoTypeInformation -Encoding UTF8
     Toast "Esportato: $(Split-Path $d.FileName -Leaf)"
@@ -5833,7 +5844,10 @@ function New-ProfileFromSelection {
     Add-Type -AssemblyName Microsoft.VisualBasic
     $n = [Microsoft.VisualBasic.Interaction]::InputBox((T 'Nome del nuovo profilo (es. "Ufficio base"):'), 'MultiTool', '')
     if (-not $n.Trim()) { return }
-    $f = Join-Path $ProfDir ((($n.Trim() -replace '[^\w\- ]', '') -replace '\s+', '-') + '.json')
+    $bn = (($n.Trim() -replace '[^\w\- ]', '') -replace '\s+', '-').Trim('-')
+    if (-not $bn) { $bn = 'Profilo-' + (Get-Date -Format 'yyyyMMdd-HHmm') }
+    $f = Join-Path $ProfDir ($bn + '.json')
+    if ((Test-Path $f) -and [MtTr]::Msg("Esiste già un profilo $bn. Sostituirlo?", 'MultiTool', 'YesNo', 'Question') -ne 'Yes') { return }
     $o = [ordered]@{ name = $n.Trim(); description = "$($sel.Count) programmi  ·  creato il $(Get-Date -Format 'dd/MM/yyyy')"; winget = @($sel | ForEach-Object { $_.Key }); local = @() }
     ConvertTo-Json $o -Depth 4 | Set-Content $f -Encoding UTF8
     Invalidate-Cache 'profiles'
@@ -5939,12 +5953,12 @@ $win.Add_PreviewKeyDown({
     if ($ui.Palette.Visibility -eq 'Visible') { return }
     if (-not $ui.NavPanel.IsEnabled -and $sync.Phase -ne 'run') { return }
     if ($ctrl -and $e.Key -eq 'H' -and $sync.Phase -ne 'run') { Go-Home; $e.Handled = $true; return }
-    if ($ctrl -and $e.Key -eq 'F' -and $ui.ViewList.Visibility -eq 'Visible' -and $Items.Count) {
-        if ($Modes[$State.Mode].Search) { [void]$ui.LSearch.Focus() } else { $ui.LFilterBox.Visibility = 'Visible'; [void]$ui.LFilter.Focus() }
+    if ($ctrl -and $e.Key -eq 'F' -and $ui.ViewList.Visibility -eq 'Visible' -and ($Items.Count -or $ui.LSearchBox.Visibility -eq 'Visible')) {
+        if ($Modes[$State.Mode].Search -or -not $Items.Count) { [void]$ui.LSearch.Focus() } else { $ui.LFilterBox.Visibility = 'Visible'; [void]$ui.LFilter.Focus() }
         $e.Handled = $true; return
     }
     if ($e.Key -eq 'F5' -and $sync.Phase -ne 'run') {
-        if ($ui.ViewList.Visibility -eq 'Visible' -and -not $Modes[$State.Mode].Search) { Start-Scan }
+        if ($ui.ViewList.Visibility -eq 'Visible' -and (-not $Modes[$State.Mode].Search -or ($State.Vars -and $State.Vars.query))) { Start-Scan }
         elseif ($ui.ViewHw.Visibility -eq 'Visible') { Load-Hw; Start-Sensors }
         elseif ($ui.ViewHome.Visibility -eq 'Visible') { Refresh-Info }
         elseif ($ui.ViewLogs.Visibility -eq 'Visible') { Load-Logs }
@@ -5987,10 +6001,17 @@ function Import-Config {
             Save-Json 'exclusions.json' @($ex)
         }
         Copy-Item "$tmp\Profili\*.json" $ProfDir -Force -ErrorAction SilentlyContinue
+        if ($Settings.BackupAuto -and -not $Settings.BackupDest) { $Settings.BackupAuto = $false }
         Save-Settings
+        try {
+            if ($Settings.AutoEnabled) { Register-AutoTask $Settings.AutoDay $Settings.AutoTime }
+            else { foreach ($tn in $TaskName, "$TaskName (recupero)") { Unregister-ScheduledTask -TaskName $tn -Confirm:$false -ErrorAction SilentlyContinue } }
+            Update-BackupTask; Update-StartupTask
+        } catch { Write-ErrLog "Importazione attività: $($_.Exception.Message)" }
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
         if ([MtTr]::Msg('Configurazione importata. Riavviare MultiTool per applicarla?', 'MultiTool', 'YesNo', 'Question') -eq 'Yes') { Restart-App }
     } catch { Toast "Importazione non riuscita: $($_.Exception.Message)" }
+    finally { if ($tmp) { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue } }
 }
 
 # --- Ultime operazioni e allarmi salute ---
@@ -6003,10 +6024,10 @@ function Update-LastOps {
             $a = [string]$h.Area
             $k = if ($a -match 'Windows Update') { 'wu' } elseif ($a -match 'Manutenzione|Maintenance') { 'full' } elseif ($a -match 'Aggiorna|Automatic|Update') { 'upd' }
                  elseif ($a -match 'Pulizia|Cleanup|Clean') { 'clean' } elseif ($a -match 'Backup') { 'bk' } else { $null }
-            if ($k) { $last[$k] = [datetime]$h.Time }
+            if ($k) { try { $last[$k] = [datetime]$h.Time } catch {} }
         }
     }
-    if ($Settings.LastBackup) { $last['bk'] = [datetime]$Settings.LastBackup }
+    if ($Settings.LastBackup) { try { $last['bk'] = [datetime]$Settings.LastBackup } catch {} }
     $State.LastOps = $last
     $f = { param($k, $t) "$t " + $(if ($last[$k]) { $last[$k].ToString('dd/MM HH:mm') } else { 'mai' }) }
     $ui.HLast.Text = ((& $f 'full' 'Manutenzione:'), (& $f 'upd' 'Programmi aggiornati:'), (& $f 'wu' 'Windows Update:'), (& $f 'clean' 'Pulizia:'), (& $f 'bk' 'Backup:')) -join '   ·   '
@@ -6152,8 +6173,8 @@ function Show-Main {
 $Tray.Add_DoubleClick({ Show-Main })
 $Tray.Add_BalloonTipClicked({ Show-Main; if ($State.BalloonMode -and $sync.Phase -ne 'run') { Open-Mode $State.BalloonMode } })
 $miOpen.Add_Click({ Show-Main })
-$miUpd.Add_Click({ Show-Main; Open-Mode 'updates' })
-$miFull.Add_Click({ Show-Main; Open-Mode 'full' })
+$miUpd.Add_Click({ Show-Main; if ($sync.Phase -ne 'run') { Open-Mode 'updates' } })
+$miFull.Add_Click({ Show-Main; if ($sync.Phase -ne 'run') { Open-Mode 'full' } })
 $miClean.Add_Click({ Show-Main; if ($sync.Phase -ne 'run') { Open-Mode 'cleanup' } })
 $miHw.Add_Click({ Show-Main; if ($sync.Phase -ne 'run') { Open-Hw } })
 $miExit.Add_Click({ $State.ForceClose = $true; Show-Main; $win.Close() })
@@ -6182,7 +6203,7 @@ $bgTimer.Start()
 function Add-Exclusions {
     $ex = [System.Collections.ArrayList]@(Read-Exclusions)
     $n = 0
-    foreach ($it in @($Items | Where-Object Selected)) {
+    foreach ($it in @($Items | Where-Object { $_.Selected -and $_.Checkable -and $_.Key })) {
         if ($ex -notcontains $it.Key) { [void]$ex.Add($it.Key) }
         $it.Selected = $false; $it.Tag = 'escluso'; $it.TagKind = 'warn'; $n++
     }
@@ -6457,7 +6478,7 @@ $ui.SetUninst.Add_Click({
 $ui.SetEnglish.IsChecked = ($Settings.Lang -eq 'en')
 $ui.SetEnglish.Add_Click({
     $Settings.Lang = if ($ui.SetEnglish.IsChecked) { 'en' } else { 'it' }; Save-Settings
-    if ($sync.Phase -ne 'run') { Restart-App }
+    if ($sync.Phase -ne 'run') { Restart-App } else { Toast 'La lingua verrà applicata al prossimo avvio' }
 })
 Update-BackupInfo
 $ui.SetLight.IsChecked = ($EffTheme -eq 'light')
@@ -6882,7 +6903,7 @@ $win.Add_Closing({
     try { Save-Settings } catch {}
     if ($sync.Phase -eq 'run') {
         $r = [MtTr]::Msg('Un''operazione è in corso: chiudendo ora potresti lasciare un''installazione a metà. Chiudere comunque?', 'MultiTool', 'YesNo', 'Warning')
-        if ($r -ne 'Yes') { $e.Cancel = $true }
+        if ($r -ne 'Yes') { $e.Cancel = $true; $State.ForceClose = $false }
     }
 })
 $win.Add_Closed({ try { $Tray.Visible = $false; $Tray.Dispose() } catch {}; [Environment]::Exit(0) })
