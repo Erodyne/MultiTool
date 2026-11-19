@@ -36,6 +36,10 @@ jobs:
             & $wg.FullName list --id 7zip.7zip --accept-source-agreements --disable-interactivity | Select-Object -Last 3
             "MT_WINGET=1" | Out-File $env:GITHUB_ENV -Append
           }
+          New-Item 'HKLM:\SOFTWARE\MultiTool\Collaudo' -Force | Out-Null
+          # simula un attacco da utente normale: cartella dati scrivibile da tutti e residui falsi che puntano a cartelle di sistema
+          icacls "$env:ProgramData\MultiTool\Dati" /grant "*S-1-5-32-545:(OI)(CI)M" /C /Q
+          '[{"App":"Finto","T":"dir","P":"C:\\Users","D":"2026-01-01T00:00:00"},{"App":"Finto","T":"reg","P":"HKLM:\\SOFTWARE\\Classes","D":"2026-01-01T00:00:00"}]' | Set-Content "$env:ProgramData\MultiTool\Dati\leftovers.json"
           exit 0
 
       - name: Diagnostica winget dentro MultiTool

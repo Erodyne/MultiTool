@@ -3,12 +3,14 @@
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.19.1'
+$AppVersion = '2026.11.19.2'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
 $DefaultUpdateUrl = 'https://raw.githubusercontent.com/Erodyne/MultiTool/main'
 $ScriptPath = $PSCommandPath
+# il collaudo automatico risponde Sì a tutto: solo se un amministratore l'ha abilitato (chiave scrivibile solo da admin)
+if ($SelfTest -and -not (Test-Path 'HKLM:\SOFTWARE\MultiTool\Collaudo')) { $SelfTest = '' }
 $PsExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $Root    = Split-Path -Parent $ScriptPath
 $Installed = $Root -like "$env:ProgramFiles*"
@@ -49,9 +51,27 @@ function Get-WingetPath {
     throw 'winget non trovato. Installa "Programma di installazione app" dal Microsoft Store.'
 }
 
+function Test-AclSafe([string]$Path, [switch]$Recurse) {
+    # vero se solo Administrators, SYSTEM e TrustedInstaller possono possedere o modificare il percorso (e ciò che contiene)
+    $okSid = 'S-1-5-32-544', 'S-1-5-18', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+    $mask = [int64]([Security.AccessControl.FileSystemRights]'WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership') -bor 0x50000000
+    try {
+        $all = @(Get-Item -LiteralPath $Path -Force -ErrorAction Stop)
+        if ($Recurse) { $all += @(Get-ChildItem -LiteralPath $Path -Recurse -Force -ErrorAction Stop) }
+        foreach ($i in $all) {
+            $a = $i.GetAccessControl('Owner, Access')
+            if ($okSid -notcontains $a.GetOwner([Security.Principal.SecurityIdentifier]).Value) { return $false }
+            foreach ($r in $a.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+                if ($r.AccessControlType -eq 'Allow' -and $okSid -notcontains $r.IdentityReference.Value -and ([int64]$r.FileSystemRights -band $mask)) { return $false }
+            }
+        }
+        $true
+    } catch { $false }
+}
 function Repair-DataAcl {
-    # v1 aveva tolto ai file ogni permesso: ripristino cartella (admin e SYSTEM completi, utenti lettura) e faccio ereditare tutto
-    if (-not $Installed -or (Test-Path (Join-Path $Base '.acl2'))) { return }
+    # la cartella dati contiene impostazioni, script delle attività pianificate e installer eseguiti come amministratore:
+    # nessun utente normale deve poterci scrivere (altrimenti potrebbe farsi dare i permessi di amministratore)
+    if (-not $Installed -or (Test-AclSafe $Base -Recurse)) { return }
     try {
         $ic = "$env:SystemRoot\System32\icacls.exe"
         [void](Invoke-Hidden $ic "`"$Base`" /setowner *S-1-5-32-544 /T /C /Q" 300)
@@ -60,8 +80,13 @@ function Repair-DataAcl {
         $r = Invoke-Hidden $ic "`"$Base\*`" /reset /T /C /Q" 300
         Get-ChildItem $DataDir -Filter '*.tmp' -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
         if (Test-Path (Join-Path $DataDir 'settings.json')) { [void](Get-Content (Join-Path $DataDir 'settings.json') -Raw -ErrorAction Stop) }
-        Set-Content (Join-Path $Base '.acl2') (Get-Date).ToString('s') -ErrorAction Stop
+        Remove-Item (Join-Path $Base '.acl2') -Force -ErrorAction SilentlyContinue
+        if (-not (Test-AclSafe $Base -Recurse)) { throw 'permessi non correggibili' }
     } catch { try { Write-ErrLog "Permessi cartella dati: $($_.Exception.Message)" } catch {} }
+}
+function Test-OtherInstance {
+    $me = $PID; $sp = [regex]::Escape($ScriptPath)
+    [bool]@(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ProcessId -ne $me -and $_.CommandLine -match "-File\s+`"?$sp" }).Count
 }
 function Get-OemEncoding { [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) }
 function Invoke-Hidden([string]$File, [string]$Arguments, [int]$TimeoutSec = 0, [Text.Encoding]$Enc) {
@@ -355,12 +380,34 @@ function Get-SecProducts([string]$Class) {
           Where-Object { $_.displayName -notmatch 'Windows Defender|Microsoft Defender|Windows Firewall' -and (([int64]$_.productState -band 0xF000) -eq 0x1000) })
     } catch { @() }
 }
+function Test-SafeLeftover([string]$T, [string]$P) {
+    $deny = '^(Microsoft.*|Windows.*|Common Files|WindowsApps|Packages|Programs|Temp|Users|Public|Default.*|Program Files.*|ProgramData|System32|SysWOW64|dotnet|Package Cache|Google|Mozilla|Adobe|Apple.*|Intel|AMD|NVIDIA.*|Realtek|Oracle|Java.*|Python|Classes|Clients|Policies|WOW6432Node|RegisteredApplications|ODBC|Khronos|Partner|OEM|Wow6432Node|Software|Services|Setup|Uninstall|CurrentVersion)$'
+    if (-not $P -or $P -match '\.\.|[*?"<>|]|\\\\') { return $false }
+    if ($T -eq 'dir') {
+        try { $full = [IO.Path]::GetFullPath($P).TrimEnd('\') } catch { return $false }
+        if ($full -ne $P.TrimEnd('\')) { return $false }
+        $U = Get-UserCtx
+        foreach ($r in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData, $U.Local, $U.Roam, $env:LOCALAPPDATA, $env:APPDATA) | Where-Object { $_ }) {
+            $r = $r.TrimEnd('\')
+            if (-not $full.StartsWith("$r\", [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $rel = @($full.Substring($r.Length + 1) -split '\\')
+            if ($rel.Count -eq 2 -and $rel[0] -eq 'Programs' -and ($r -eq $U.Local.TrimEnd('\') -or $r -eq $env:LOCALAPPDATA.TrimEnd('\'))) { $rel = @($rel[1]) }
+            if ($rel.Count -le 2 -and -not @($rel | Where-Object { $_ -match $deny -or -not $_ }).Count) { return $true }
+        }
+        return $false
+    }
+    $m = [regex]::Match($P, '^(HKLM:\\SOFTWARE\\(WOW6432Node\\)?|HKCU:\\Software\\|Registry::HKEY_USERS\\S-1-5-21-[\d\-]+\\Software\\)([^\\]+)(\\[^\\]+)?$', 'IgnoreCase')
+    if (-not $m.Success) { return $false }
+    -not @(@($m.Groups[3].Value, $m.Groups[4].Value.TrimStart('\')) | Where-Object { $_ -and $_ -match $deny }).Count
+}
 function Add-Leftovers($d) {
     $nm = (([string]$d.Name -replace '\s*\(.*?\)', '') -replace '\s+v?\d+([\.\-]\d+)*.*$', '').Trim()
-    if ($nm.Length -lt 3 -or $nm -match '^(Microsoft|Windows|Intel|AMD|NVIDIA|Realtek)$') { return 0 }
+    if ($nm.Length -lt 3 -or $nm -match '^(Microsoft|Windows|Intel|AMD|NVIDIA|Realtek)$' -or $nm -match '[\\/:*?"<>|]|\.\.') { return 0 }
+    # se è ancora installato un altro programma con lo stesso nome (altre versioni, stesso produttore) le sue cartelle non sono residui
+    if (@(Get-InstalledNames | Where-Object { $_ -like "$nm*" }).Count) { return 0 }
     $U = Get-UserCtx
     $pub = ([string]$d.Pub -replace ',?\s+(Inc|Ltd|LLC|GmbH|S\.?r\.?l|Corporation|Corp|Co)\.?$', '').Trim()
-    if ($pub -match 'Microsoft') { $pub = '' }
+    if ($pub -match 'Microsoft' -or $pub -match '[\\/:*?"<>|]|\.\.') { $pub = '' }
     $c = New-Object System.Collections.ArrayList
     $dirs = @([string]$d.Loc)
     foreach ($b in $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData, $U.Roam, $U.Local) {
@@ -376,6 +423,7 @@ function Add-Leftovers($d) {
     $regs = @("HKLM:\SOFTWARE\$nm", "HKLM:\SOFTWARE\WOW6432Node\$nm", "$($U.Hive)\Software\$nm")
     if ($pub) { $regs += "HKLM:\SOFTWARE\$pub\$nm", "HKLM:\SOFTWARE\WOW6432Node\$pub\$nm", "$($U.Hive)\Software\$pub\$nm" }
     foreach ($h in $regs) { if (Test-Path -LiteralPath $h) { [void]$c.Add(@{ T = 'reg'; P = $h }) } }
+    $c = @($c | Where-Object { Test-SafeLeftover $_.T $_.P })
     if (-not $c.Count) { return 0 }
     $all = [System.Collections.ArrayList]@(@(Read-Json 'leftovers.json' @()) | Where-Object { $_ })
     foreach ($x in $c) { if (-not @($all | Where-Object { $_.P -eq $x.P }).Count) { [void]$all.Add([pscustomobject]@{ App = [string]$d.Name; T = $x.T; P = $x.P; D = (Get-Date).ToString('s') }) } }
@@ -1288,7 +1336,7 @@ function New-SensorHistory {
     $sets = foreach ($g in $groups) {
         $pts = ($g.Group | ForEach-Object { "{x:$([long](([datetime]$_.T).ToUniversalTime() - [datetime]'1970-01-01').TotalMilliseconds),y:$(([double]($_.V -replace ',', '.')).ToString([Globalization.CultureInfo]::InvariantCulture))}" }) -join ','
         $axis = if (($g.Group | Select-Object -First 1).K -eq 'Fan') { 'y2' } else { 'y' }
-        "{label:$(ConvertTo-Json $g.Name),data:[$pts],borderColor:'$($colors[$i % 8])',yAxisID:'$axis',pointRadius:0,borderWidth:1.5,tension:.2}"; $i++
+        "{label:$((ConvertTo-Json $g.Name) -replace '</', '<\/'),data:[$pts],borderColor:'$($colors[$i % 8])',yAxisID:'$axis',pointRadius:0,borderWidth:1.5,tension:.2}"; $i++
     }
     $html = @"
 <!DOCTYPE html><html lang="it"><head><meta charset="utf-8"><title>Storico sensori - $env:COMPUTERNAME</title>
@@ -2556,6 +2604,7 @@ if ($Auto) {
     try { Add-Type -Name Idle -Namespace NativeIdle -MemberDefinition '[StructLayout(LayoutKind.Sequential)] public struct LII { public uint cbSize; public uint dwTime; } [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LII p);' } catch {}
     $WorkMx = New-Object Threading.Mutex($false, 'Global\MultiTool2026.Work')
     $gotWork = $false; try { $gotWork = $WorkMx.WaitOne(0) } catch [Threading.AbandonedMutexException] { $gotWork = $true }
+    if (-not $gotWork -and -not (Test-OtherInstance)) { $gotWork = $true; Write-ErrLog 'Blocco di lavoro occupato da un processo estraneo: ignorato' }
     if (-not $gotWork) { Add-History 'Automatico' 'Rimandato' 'MultiTool sta già lavorando: riprovo al prossimo accesso' 'skip'; exit }
     $script:rpDone = -not $S.Restore
     function Ensure-RestorePoint { if (-not $script:rpDone) { $script:rpDone = $true; [void](New-RestorePoint 'MultiTool - Aggiornamento automatico') } }
@@ -2675,6 +2724,7 @@ try {
     $GMutex = New-Object Threading.Mutex($false, 'Global\MultiTool2026.Any')
     $g2 = $false
     try { $g2 = $GMutex.WaitOne($(if ($Restart) { 20000 } else { 12000 })) } catch [Threading.AbandonedMutexException] { $g2 = $true }
+    if (-not $g2 -and -not (Test-OtherInstance)) { $g2 = $true; $GMutex = $null; Write-ErrLog 'Blocco di istanza occupato da un processo estraneo: ignorato' }
     if (-not $g2) { [void][MtTr]::Msg('MultiTool è già aperto da un altro utente su questo PC. Chiudilo prima di avviarlo qui.', 'MultiTool', 'OK', 'Information'); exit }
 } catch {}
 $Settings = Get-Settings
@@ -5021,10 +5071,10 @@ $sync.ScanInfo = 'Spunta i programmi da installare e premi INSTALLA: vengono sca
 
 $ScanLeftovers = @'
 foreach ($x in @(Read-Json 'leftovers.json' @()) | Where-Object { $_ }) {
-    if (-not (Test-Path -LiteralPath $x.P)) { continue }
+    if (-not (Test-SafeLeftover $x.T $x.P) -or -not (Test-Path -LiteralPath $x.P)) { continue }
     $isDir = $x.T -eq 'dir'
     $rows.Add((New-Row @{ RawName = $x.P; Sub = "Residuo di $($x.App)"; Key = $x.P; Data = $x.T; C1 = $(if ($isDir) { 'cartella' } else { 'registro' })
-        C2 = $(if ($isDir) { Format-Size (Get-DirSize @($x.P)) } else { '' }); Selected = $true; Glyph = [string][char]$(if ($isDir) { 0xE8B7 } else { 0xE74C }) })) | Out-Null
+        C2 = $(if ($isDir) { Format-Size (Get-DirSize @($x.P)) } else { '' }); Selected = $false; Glyph = [string][char]$(if ($isDir) { 0xE8B7 } else { 0xE74C }) })) | Out-Null
 }
 $sync.ScanInfo = 'Cartelle e chiavi di registro rimaste dopo le disinstallazioni. Le cartelle vanno nel Cestino, le chiavi vengono salvate in Dati\Residui prima di eliminarle.'
 '@
@@ -5034,6 +5084,7 @@ Add-Type -AssemblyName Microsoft.VisualBasic
 $bk = Join-Path $DataDir 'Residui'; New-Item -ItemType Directory $bk -Force | Out-Null
 Invoke-Each $items {
     param($it)
+    if (-not (Test-SafeLeftover ([string]$it.Data) $it.Key)) { Set-It $it 'skip' 'Percorso protetto: non eliminato'; return }
     if ($it.Data -eq 'dir') { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($it.Key, 'OnlyErrorDialogs', 'SendToRecycleBin') }
     else {
         $native = $it.Key -replace '^HKLM:', 'HKLM' -replace '^HKCU:', 'HKCU' -replace '^Registry::HKEY_USERS', 'HKU'
@@ -5564,6 +5615,7 @@ function Start-Action([string]$op) {
         if ([MtTr]::Msg(($M.Confirm -f $sel.Count), 'MultiTool', 'YesNo', 'Warning') -ne 'Yes') { return }
     }
     $wk = $false; try { $wk = $WorkMx.WaitOne(0) } catch [Threading.AbandonedMutexException] { $wk = $true }
+    if (-not $wk -and -not (Test-OtherInstance)) { Write-ErrLog 'Blocco di lavoro occupato da un processo estraneo: ignorato'; $wk = $true; $State.NoWorkMx = $true }
     if (-not $wk) { Toast 'L''aggiornamento automatico di MultiTool è in corso: riprova tra qualche minuto'; return }
     $State.HoldWork = $true
     foreach ($it in $Items) {
@@ -6405,6 +6457,7 @@ $ui.SetSave.Add_Click({
     if ($time -notmatch '^([01]?\d|2[0-3]):[0-5]\d$') { Toast 'Orario non valido: usa il formato HH:MM'; return }
     $day = ($days | ForEach-Object { $ui[$_] } | Where-Object { $_.IsChecked } | Select-Object -First 1).Tag
     if (-not $day) { $day = 'Sunday' }
+    if ($ui.SetAuto.IsChecked -and -not $Settings.AutoEnabled -and -not (Confirm-PortableTasks)) { $ui.SetAuto.IsChecked = $false; return }
     $Settings.AutoEnabled = [bool]$ui.SetAuto.IsChecked; $Settings.AutoDay = $day; $Settings.AutoTime = $time
     Save-Settings
     try {
@@ -6465,6 +6518,7 @@ $ui.SetBkTime.Text = $Settings.BackupTime
 $ui.SetBkSave.Add_Click({
     $t = $ui.SetBkTime.Text.Trim()
     if ($t -notmatch '^([01]?\d|2[0-3]):[0-5]\d$') { Toast 'Orario non valido: usa il formato HH:MM'; return }
+    if ($ui.SetBkAuto.IsChecked -and -not $Settings.BackupAuto -and -not (Confirm-PortableTasks)) { $ui.SetBkAuto.IsChecked = $false; return }
     if ($ui.SetBkAuto.IsChecked -and -not $Settings.BackupDest) { Toast 'Scegli prima la destinazione nella sezione Backup'; $ui.SetBkAuto.IsChecked = $false; return }
     $Settings.BackupAuto = [bool]$ui.SetBkAuto.IsChecked; $Settings.BackupTime = $t; Save-Settings
     Update-BackupTask; if ($Settings.BackupAuto) { Show-TaskAccountNote }; Toast $(if ($Settings.BackupAuto) { "Backup automatico ogni giorno alle $t" } else { 'Backup automatico disattivato' })
@@ -6515,6 +6569,10 @@ function Update-StartupTask {
         } else { Unregister-ScheduledTask -TaskName $StartTaskName -Confirm:$false -ErrorAction SilentlyContinue }
     } catch { Toast "Avvio con Windows non impostato: $($_.Exception.Message)" }
 }
+function Confirm-PortableTasks {
+    if ($Installed -or ((Test-AclSafe $Root) -and (Test-AclSafe $ScriptPath) -and (Test-AclSafe $DataDir -Recurse))) { return $true }
+    [MtTr]::Msg("MultiTool è in una cartella che anche programmi senza permessi di amministratore possono modificare ($Root). Un'attività pianificata che lo avvia come amministratore permetterebbe a un programma malevolo di ottenere quei permessi senza chiedere.`n`nPer usare le attività automatiche installa MultiTool (Impostazioni › Installa in questo PC). Continuare comunque?", 'MultiTool', 'YesNo', 'Warning') -eq 'Yes'
+}
 function Show-TaskAccountNote {
     $u = Get-UserCtx
     if ($u.Other) { [void][MtTr]::Msg("Le attività pianificate vengono registrate per l'account amministratore $env:USERNAME, non per $($u.Name): partiranno solo quando $env:USERNAME ha effettuato l'accesso al PC.", 'MultiTool', 'OK', 'Information') }
@@ -6534,7 +6592,7 @@ function Repair-Tasks {
     }
 }
 $ui.SetStartup.IsChecked = [bool]$Settings.StartWithWindows
-$ui.SetStartup.Add_Click({ $Settings.StartWithWindows = [bool]$ui.SetStartup.IsChecked; Save-Settings; Update-StartupTask; if ($Settings.StartWithWindows) { Show-TaskAccountNote }
+$ui.SetStartup.Add_Click({ if ($ui.SetStartup.IsChecked -and -not (Confirm-PortableTasks)) { $ui.SetStartup.IsChecked = $false; return }; $Settings.StartWithWindows = [bool]$ui.SetStartup.IsChecked; Save-Settings; Update-StartupTask; if ($Settings.StartWithWindows) { Show-TaskAccountNote }
     Toast $(if ($Settings.StartWithWindows) { 'MultiTool partirà con Windows nell''area di notifica' } else { 'Avvio con Windows disattivato' }) })
 $ui.SetTray.IsChecked = [bool]$Settings.Tray
 $ui.SetPrefetch.IsChecked = [bool]$Settings.Prefetch
@@ -6659,7 +6717,7 @@ $timer.Add_Tick({
         elseif ($sync.NewVersion) {
             $ui.SetUpdInfo.Text = "Versione installata: $AppVersion  ·  disponibile la $($sync.NewVersion)"
             $ui.SetUpdGo.Visibility = 'Visible'
-            if ($Settings.AutoSelfUpdate) { $State.PendingSelfUpdate = $sync.NewVersion }
+            if ($Settings.AutoSelfUpdate -and (Get-UpdUrl) -eq $DefaultUpdateUrl) { $State.PendingSelfUpdate = $sync.NewVersion }
             else { Toast "È disponibile MultiTool $($sync.NewVersion): vai in Impostazioni per aggiornare" }
         } else { $ui.SetUpdInfo.Text = "Versione installata: $AppVersion  ·  è la più recente" }
     }
@@ -6820,7 +6878,7 @@ $timer.Add_Tick({
         }
         'done' {
             try { [void][NativePow.Power]::SetThreadExecutionState([uint32]2147483648) } catch {}
-            if ($State.HoldWork) { $State.HoldWork = $false; try { $WorkMx.ReleaseMutex() } catch {} }
+            if ($State.HoldWork) { $State.HoldWork = $false; if (-not $State.NoWorkMx) { try { $WorkMx.ReleaseMutex() } catch {} }; $State.NoWorkMx = $false }
             Invalidate-Cache $State.Mode
             if ($sync.ExtraRows) {
                 $xr = @($sync.ExtraRows.ToArray() | ForEach-Object { T $_.Name })
@@ -6921,7 +6979,7 @@ $h = (Get-Date).Hour
 $ui.HHello.Text = $(if ($Settings.Lang -eq 'en') { if ($h -lt 12) { 'Good morning' } elseif ($h -lt 18) { 'Good afternoon' } else { 'Good evening' } } elseif ($h -lt 12) { 'Buongiorno' } elseif ($h -lt 18) { 'Buon pomeriggio' } else { 'Buonasera' }) + ", $env:USERNAME"
 
 # --- Controlli all'avvio ---
-try { Get-ChildItem $Root -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue } catch {}
+try { @(Get-ChildItem $Root -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.ps1', '.exe', '.vbs', '.ico', '.png' }) + @(Get-ChildItem (Join-Path $Root 'Strumenti') -File -ErrorAction SilentlyContinue) | Unblock-File -ErrorAction SilentlyContinue } catch {}
 try {
     $hp = Join-Path $DataDir 'history.jsonl'
     if ((Test-Path $hp) -and (Get-Item $hp).Length -gt 1MB) { $keep = Get-Content $hp -Tail 2000 -Encoding UTF8; $keep | Set-Content $hp -Encoding UTF8 }
@@ -7047,7 +7105,8 @@ if ($SelfTest) {
         @{ N = 'cleanup'; K = 'mode'; M = 'cleanup' }, @{ N = 'bigfiles'; K = 'mode'; M = 'bigfiles'; T = 600 }, @{ N = 'space'; K = 'mode'; M = 'space'; V = @{ path = "$env:SystemRoot\Temp" } }
         @{ N = 'repair'; K = 'mode'; M = 'repair' }, @{ N = 'events'; K = 'mode'; M = 'events' }, @{ N = 'privacy'; K = 'mode'; M = 'privacy' }
         @{ N = 'security'; K = 'mode'; M = 'security' }, @{ N = 'network'; K = 'mode'; M = 'network' }, @{ N = 'lan'; K = 'mode'; M = 'lan' }
-        @{ N = 'bench'; K = 'mode'; M = 'bench' }, @{ N = 'restore'; K = 'mode'; M = 'restore' }, @{ N = 'history'; K = 'mode'; M = 'history' }, @{ N = 'leftovers'; K = 'mode'; M = 'leftovers' }
+        @{ N = 'bench'; K = 'mode'; M = 'bench' }, @{ N = 'restore'; K = 'mode'; M = 'restore' }, @{ N = 'history'; K = 'mode'; M = 'history' }, @{ N = 'leftovers'; K = 'mode'; M = 'leftovers'; Expect = { -not @($Items | Where-Object { $_.Key -in 'C:\Users', 'HKLM:\SOFTWARE\Classes' }).Count } }
+        @{ N = 'permessi-cartella-dati'; K = 'mode'; M = 'history'; Expect = { -not $Installed -or (Test-AclSafe $Base -Recurse) } }
         @{ N = 'azione-pulizia'; K = 'act'; M = 'cleanup'; Op = 'go'; T = 900 }
         @{ N = 'azione-privacy'; K = 'act'; M = 'privacy'; Op = 'apply'; T = 600 }
         @{ N = 'azione-servizi-manuale'; K = 'act'; M = 'services'; Op = 'manual'; T = 300; One = $true }

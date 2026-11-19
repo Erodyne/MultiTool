@@ -105,6 +105,10 @@ Section "MultiTool (obbligatorio)" SecMain
   SetOverwrite off
   File "${SRC}\Profili\*.json"
   SetOverwrite on
+  ; solo amministratori e SYSTEM possono modificare i dati (contengono script eseguiti come amministratore)
+  nsExec::Exec '"$SYSDIR\icacls.exe" "$APPDATA\MultiTool" /setowner *S-1-5-32-544 /T /C /Q'
+  nsExec::Exec '"$SYSDIR\icacls.exe" "$APPDATA\MultiTool" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX /C /Q'
+  nsExec::Exec '"$SYSDIR\icacls.exe" "$APPDATA\MultiTool\*" /reset /T /C /Q'
 
   SetOutPath "$INSTDIR"
   CreateShortcut "$SMPROGRAMS\MultiTool.lnk" "$INSTDIR\MultiTool.exe" "" "$INSTDIR\MultiTool.ico" 0 SW_SHOWNORMAL "" "Manutenzione del PC"
