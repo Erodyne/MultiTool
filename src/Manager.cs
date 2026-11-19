@@ -13,7 +13,7 @@ using Microsoft.Win32;
 public class AppState {
     public AppDef Def;
     public string InstalledVersion, InstallDir, ExePath, UninstallCmd;
-    public string LatestVersion, Notes, AssetUrl, AssetName, ShaUrl, ReleasePage;
+    public string LatestVersion, Notes, AssetUrl, AssetName, ShaUrl, SigUrl, ReleasePage;
     public bool Checked, Online, Busy;
     public string Error, Progress;
     public double Percent = -1;
@@ -64,10 +64,10 @@ public static class Manager {
     public static void DetectLocal(AppState s) {
         var d = s.Def;
         s.InstalledVersion = null; s.InstallDir = null; s.ExePath = null; s.UninstallCmd = null;
-        foreach (var key in d.UninstallKeys) {
+        // Solo il ramo giusto del registro: una voce finta in HKCU (scrivibile da qualsiasi programma)
+        // non deve poter far avviare o disinstallare "come amministratore" un exe estraneo.
+        foreach (var key in d.UninstallKeys)
             if (ReadUninstall(s, d.UninstallHive == Hive.Machine ? RegistryHive.LocalMachine : RegistryHive.CurrentUser, key)) break;
-            if (ReadUninstall(s, d.UninstallHive == Hive.Machine ? RegistryHive.CurrentUser : RegistryHive.LocalMachine, key)) break;
-        }
         var custom = Settings.Get("path." + d.Id);
         var candidates = new List<string>();
         if (!string.IsNullOrEmpty(custom)) candidates.Add(custom);
@@ -75,6 +75,7 @@ public static class Manager {
         foreach (var dir in d.DefaultDirs) candidates.Add(Path.Combine(dir, d.ExeName));
         foreach (var c in candidates) {
             try {
+                if (d.AdminInstall && !InProtectedDir(c)) continue; // programmi da amministratore: solo da Programmi
                 if (File.Exists(c)) { s.ExePath = Path.GetFullPath(c); s.InstallDir = Path.GetDirectoryName(s.ExePath); break; }
             } catch { }
         }
@@ -86,6 +87,20 @@ public static class Manager {
             } catch { }
         }
         if (s.ExePath == null) { s.InstalledVersion = null; s.InstallDir = null; }
+    }
+
+    // Cartelle scrivibili solo dagli amministratori
+    public static bool InProtectedDir(string path) {
+        try {
+            var full = Path.GetFullPath(path).TrimEnd('\\') ;
+            foreach (var v in new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86 }) {
+                var root = Environment.GetFolderPath(v);
+                if (string.IsNullOrEmpty(root)) continue;
+                root = Path.GetFullPath(root).TrimEnd('\\') + "\\";
+                if (full.StartsWith(root, StringComparison.OrdinalIgnoreCase) && full.IndexOf("..", StringComparison.Ordinal) < 0) return true;
+            }
+        } catch { }
+        return false;
     }
 
     static bool ReadUninstall(AppState s, RegistryHive hive, string name) {
@@ -123,20 +138,27 @@ public static class Manager {
 
     // ---------- GitHub ----------
     static string HttpGet(string url) {
+        if (SafeUrl(url, true) == null) throw new Exception("indirizzo non sicuro");
         var rq = (HttpWebRequest)WebRequest.Create(url);
         rq.UserAgent = "ErodyneSuite/" + Program.Version;
         rq.Accept = "application/vnd.github+json";
         rq.Timeout = 20000; rq.ReadWriteTimeout = 20000;
-        using (var rs = (HttpWebResponse)rq.GetResponse())
-        using (var sr = new StreamReader(rs.GetResponseStream(), Encoding.UTF8))
-            return sr.ReadToEnd();
+        using (var rs = (HttpWebResponse)rq.GetResponse()) {
+            if (rs.ResponseUri.Scheme != Uri.UriSchemeHttps) throw new Exception("risposta non protetta (http)");
+            using (var sr = new StreamReader(rs.GetResponseStream(), Encoding.UTF8)) {
+                var buf = new char[2 * 1024 * 1024 + 1];
+                int n = 0, k;
+                while (n < buf.Length && (k = sr.Read(buf, n, buf.Length - n)) > 0) n += k;
+                if (n >= buf.Length) throw new Exception("risposta troppo grande");
+                return new string(buf, 0, n);
+            }
+        }
     }
 
     public class Release { public string Version, Notes, Page; public List<KeyValuePair<string, string>> Assets = new List<KeyValuePair<string, string>>(); }
 
     public static Release LatestRelease(string repo) {
-        var api = (Environment.GetEnvironmentVariable("ERODYNE_API") ?? "https://api.github.com").TrimEnd('/');
-        var json = HttpGet(api + "/repos/" + repo + "/releases/latest");
+        var json = HttpGet("https://api.github.com/repos/" + repo + "/releases/latest");
         var o = new JavaScriptSerializer { MaxJsonLength = 8 * 1024 * 1024 }.DeserializeObject(json) as Dictionary<string, object>;
         if (o == null) throw new Exception("risposta non valida");
         var r = new Release();
@@ -158,18 +180,20 @@ public static class Manager {
     }
 
     public static void CheckOnline(AppState s) {
-        string ver = null, notes = null, page = null, asset = null, url = null, sha = null, err = null;
+        string ver = null, notes = null, page = null, asset = null, url = null, sha = null, sig = null, err = null;
         bool online = false;
         try {
             var r = LatestRelease(s.Def.Repo);
             ver = r.Version; notes = r.Notes; page = SafeUrl(r.Page);
             var rx = new Regex(s.Def.AssetPattern, RegexOptions.IgnoreCase);
-            foreach (var a in r.Assets) if (rx.IsMatch(a.Key) && SafeUrl(a.Value) != null) { asset = a.Key; url = a.Value; break; }
+            foreach (var a in r.Assets) if (rx.IsMatch(a.Key) && SafeUrl(a.Value, true) != null) { asset = a.Key; url = a.Value; break; }
             if (asset != null) {
                 foreach (var a in r.Assets) {
                     var n = a.Key.ToLowerInvariant();
-                    if (n == asset.ToLowerInvariant() + ".sha256") { sha = a.Value; break; }
-                    if (n == "sha256sums.txt" || n == "sha256sums") sha = a.Value;
+                    if (SafeUrl(a.Value, true) == null) continue;
+                    if (n == asset.ToLowerInvariant() + ".sha256") { sha = a.Value; }
+                    else if ((n == "sha256sums.txt" || n == "sha256sums") && (sha == null || !sha.EndsWith(".sha256"))) sha = a.Value;
+                    else if (n == asset.ToLowerInvariant() + ".sig") sig = a.Value;
                 }
             }
             online = true;
@@ -186,23 +210,64 @@ public static class Manager {
         }
         // tutto insieme, così l'interfaccia non vede stati a metà
         s.LatestVersion = ver; s.Notes = notes; s.ReleasePage = page;
-        s.AssetName = asset; s.ShaUrl = sha; s.AssetUrl = url;
+        s.AssetName = asset; s.ShaUrl = sha; s.SigUrl = sig; s.AssetUrl = url;
         s.Error = err; s.Online = online; s.Checked = true;
     }
 
     // Solo indirizzi web: niente file://, script o altri protocolli dalle note di rilascio
-    public static string SafeUrl(string u) {
+    public static string SafeUrl(string u, bool httpsOnly = false) {
         Uri x;
         if (string.IsNullOrEmpty(u) || !Uri.TryCreate(u, UriKind.Absolute, out x)) return null;
-        return x.Scheme == Uri.UriSchemeHttps || x.Scheme == Uri.UriSchemeHttp ? x.AbsoluteUri : null;
+        if (x.Scheme == Uri.UriSchemeHttps) return x.AbsoluteUri;
+        return !httpsOnly && x.Scheme == Uri.UriSchemeHttp ? x.AbsoluteUri : null;
     }
 
     // ---------- download e installazione ----------
-    public static string Download(AppState s, Action<double, string> progress) {
+    // Installer scaricato e bloccato in sola lettura fino alla fine dell'installazione:
+    // nessun altro programma può sostituirlo tra la verifica e l'avvio come amministratore.
+    public class Payload : IDisposable {
+        public string File, Hash; public bool Signed; public FileStream Lock;
+        public void Dispose() { if (Lock != null) Lock.Dispose(); Lock = null; TryDelete(File); }
+    }
+
+    public static Payload Fetch(AppState s, Action<double, string> progress) {
+        var file = Download(s, progress);
+        var p = new Payload { File = file };
+        try {
+            p.Lock = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using (var sha = SHA256.Create()) p.Hash = Hex(sha.ComputeHash(p.Lock));
+            p.Lock.Position = 0;
+            if (p.Hash != lastHash) throw new Exception("il file è stato modificato dopo il download");
+            p.Signed = VerifySignature(s, p.Hash, progress);
+        } catch { p.Dispose(); throw; }
+        return p;
+    }
+
+    [ThreadStatic] static string lastHash;
+    static string Hex(byte[] b) { return BitConverter.ToString(b).Replace("-", "").ToLowerInvariant(); }
+
+    // Firma RSA-SHA256 dell'impronta, in "<file>.sig" (Base64). Obbligatoria se Catalog.ReleaseKey è impostata.
+    static bool VerifySignature(AppState s, string hash, Action<double, string> progress) {
+        if (string.IsNullOrEmpty(Catalog.ReleaseKey)) return false;
+        if (s.SigUrl == null) throw new Exception("la release non è firmata: installazione bloccata");
+        progress(-1, "Verifica della firma");
+        byte[] sig;
+        try { sig = Convert.FromBase64String(HttpGet(s.SigUrl).Trim()); } catch (FormatException) { throw new Exception("firma non leggibile"); }
+        var h = new byte[32];
+        for (int i = 0; i < 32; i++) h[i] = Convert.ToByte(hash.Substring(i * 2, 2), 16);
+        using (var rsa = new RSACryptoServiceProvider()) {
+            rsa.FromXmlString(Catalog.ReleaseKey);
+            if (!rsa.VerifyHash(h, CryptoConfig.MapNameToOID("SHA256"), sig)) throw new Exception("firma NON valida: il file non viene dal suo autore");
+        }
+        return true;
+    }
+
+    static string Download(AppState s, Action<double, string> progress) {
         // cartella nuova a ogni download: l'installer non carica DLL estranee lasciate in %TEMP%
         var dir = Path.Combine(Path.Combine(Path.GetTempPath(), "ErodyneSuite"), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         var file = Path.Combine(dir, Path.GetFileName(s.AssetName));
+        if (SafeUrl(s.AssetUrl, true) == null) throw new Exception("indirizzo di download non sicuro");
         var rq = (HttpWebRequest)WebRequest.Create(s.AssetUrl);
         rq.UserAgent = "ErodyneSuite/" + Program.Version;
         rq.Timeout = 30000; rq.ReadWriteTimeout = 60000;
@@ -212,10 +277,14 @@ public static class Manager {
         using (var inp = rs.GetResponseStream())
         using (var outp = File.Create(file))
         using (var sha = SHA256.Create()) {
+            if (rs.ResponseUri.Scheme != Uri.UriSchemeHttps) throw new Exception("download non protetto (http)");
             long total = rs.ContentLength, done = 0;
+            const long Max = 1024L * 1024 * 1024;
+            if (total > Max) throw new Exception("file troppo grande");
             var buf = new byte[81920]; int n; var last = DateTime.MinValue;
             while ((n = inp.Read(buf, 0, buf.Length)) > 0) {
                 outp.Write(buf, 0, n); sha.TransformBlock(buf, 0, n, null, 0); done += n;
+                if (done > Max) throw new Exception("file troppo grande");
                 if ((DateTime.Now - last).TotalMilliseconds > 120) {
                     last = DateTime.Now;
                     progress(total > 0 ? (double)done / total : -1,
@@ -225,7 +294,8 @@ public static class Manager {
             sha.TransformFinalBlock(buf, 0, 0);
             if (total > 0 && done != total) throw new Exception("download interrotto (" + Mb(done) + " di " + Mb(total) + ")");
             if (done == 0) throw new Exception("il file scaricato è vuoto");
-            hash = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
+            hash = Hex(sha.Hash);
+            lastHash = hash;
         }
         } catch { TryDelete(file); throw; }
         if (s.ShaUrl != null) {
@@ -259,10 +329,11 @@ public static class Manager {
 
     static string Mb(long b) { return (b / 1048576.0).ToString("0.0") + " MB"; }
 
-    public static int RunInstaller(AppState s, string file) {
-        var si = new ProcessStartInfo(file, s.Def.SilentArgs) { UseShellExecute = true };
+    public static int RunInstaller(AppState s, Payload p) {
+        if (p.Lock == null) throw new Exception("installer non verificato");
+        var si = new ProcessStartInfo(p.File, s.Def.SilentArgs) { UseShellExecute = true, WorkingDirectory = Environment.SystemDirectory }; // non dalla cartella temporanea
         if (s.Def.AdminInstall) si.Verb = "runas";
-        using (var p = Process.Start(si)) { p.WaitForExit(); return p.ExitCode; }
+        using (var proc = Process.Start(si)) { proc.WaitForExit(); return proc.ExitCode; }
     }
 
     public static void Uninstall(AppState s) {

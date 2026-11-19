@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 
-// Catalogo dei programmi della suite. Repository, percorsi e argomenti si possono
-// cambiare senza ricompilare in %APPDATA%\ErodyneSuite\impostazioni.txt (repo.<id>=Utente/Nome, path.<id>=C:\...\prog.exe).
+// Catalogo dei programmi della suite. I repository sono fissi nel codice: un file modificabile
+// da qualsiasi programma dell'utente non deve poter decidere cosa viene installato come amministratore.
 public enum Hive { Machine, User }
 
 public class AppDef {
@@ -19,9 +19,15 @@ public class AppDef {
 
 public static class Catalog {
     public const string SuiteRepo = "Erodyne/ErodyneSuite";
+
+    // Chiave pubblica di firma delle release (XML RSA, da Strumenti\Firma-Release.ps1 -NuovaChiave).
+    // Vuota: gli installer non firmati partono solo dopo la conferma dell'utente, con impronta visibile.
+    // Impostata: parte solo un installer con "<file>.sig" valido; un account GitHub rubato non basta più.
+    public const string ReleaseKey = "";
     public static readonly List<AppDef> Apps = new List<AppDef>();
 
-    static string PF { get { return Environment.GetEnvironmentVariable("ProgramW6432") ?? Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles); } }
+    // dal registro di sistema, non dalle variabili d'ambiente (modificabili dall'utente)
+    static string PF { get { return Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles); } }
     static string LAD { get { return Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData); } }
 
     static Catalog() {
@@ -64,10 +70,7 @@ public static class Catalog {
             UninstallHive = Hive.User, UninstallKeys = new[] { "AcquisizioneVideo", "{6F6B2C1E-3A2D-4C8E-9B57-AC0E5D0F1A06}_is1" },
             DefaultDirs = new[] { Path.Combine(LAD, @"Programs\AcquisizioneVideo") }
         });
-        foreach (var a in Apps) {
-            string r = Settings.Get("repo." + a.Id);
-            if (!string.IsNullOrEmpty(r)) a.Repo = r;
-        }
+
     }
 }
 
@@ -92,7 +95,7 @@ public static class Settings {
         if (string.IsNullOrEmpty(v)) map.Remove(k); else map[k] = v;
         try {
             Directory.CreateDirectory(Dir);
-            var lines = new List<string> { "# Erodyne Suite: repo.<id>=Utente/Nome  path.<id>=percorso dell'exe" };
+            var lines = new List<string> { "# Erodyne Suite: path.<id>=percorso dell'exe (solo per i programmi installati per utente)" };
             foreach (var kv in map) lines.Add(kv.Key + "=" + kv.Value);
             File.WriteAllLines(FilePath, lines.ToArray());
         } catch { }

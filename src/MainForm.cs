@@ -264,28 +264,42 @@ public class MainForm : Form {
         bool update = s.Installed;
         RefreshUi();
         ThreadPool.QueueUserWorkItem(_ => {
-            string msg, file = null;
+            string msg; Manager.Payload file = null;
             try {
-                file = Manager.Download(s, (p, t) => { s.Percent = p; SetStatus(s.Def.Name + ": " + t, p); RefreshUi(); });
+                file = Manager.Fetch(s, (p, t) => { s.Percent = p; SetStatus(s.Def.Name + ": " + t, p); RefreshUi(); });
                 s.Percent = -1;
+                if (!file.Signed && !ConfirmUnsigned(s, file.Hash)) throw new OperationCanceledException();
                 SetStatus(s.Def.Name + ": installazione in corso…", -1); RefreshUi();
                 int code = Manager.RunInstaller(s, file);
                 Manager.DetectLocal(s);
                 msg = code == 0 && s.Installed
                     ? s.Def.Name + (update ? " aggiornato" : " installato") + (s.InstalledVersion != null ? " (" + s.InstalledVersion + ")" : "")
                     : s.Def.Name + ": installazione non completata (codice " + code + ")";
+            } catch (OperationCanceledException) {
+                msg = s.Def.Name + ": installazione annullata";
             } catch (Win32Exception e) {
                 msg = e.NativeErrorCode == 1223 ? s.Def.Name + ": installazione annullata" : s.Def.Name + ": " + e.Message;
             } catch (Exception e) {
                 msg = s.Def.Name + ": " + e.Message;
                 s.Error = e.Message;
             }
-            if (file != null) Manager.TryDelete(file);
+            if (file != null) file.Dispose();
             s.Busy = false; s.Percent = -1;
             SetStatus(msg, -1);
             RefreshUi();
             if (done != null) done();
         });
+    }
+
+    // Senza firma la suite non può sapere chi ha pubblicato il file: lo dice e mostra l'impronta
+    bool ConfirmUnsigned(AppState s, string hash) {
+        Func<bool> ask = () => MessageBox.Show(this,
+            s.Def.Name + " " + (s.LatestVersion ?? "") + "\n\n" +
+            "Origine: github.com/" + s.Def.Repo + "\nFile: " + s.AssetName + "\nSHA-256: " + hash + "\n\n" +
+            "Questo installer non è firmato: la suite controlla che arrivi integro da GitHub, ma non può garantire chi l'ha pubblicato." +
+            (s.Def.AdminInstall ? "\nVerrà avviato come amministratore." : "") + "\n\nInstallare?",
+            "Erodyne Suite", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+        return InvokeRequired ? (bool)Invoke(ask) : ask();
     }
 
     void UpdateAll() {
@@ -316,6 +330,10 @@ public class MainForm : Form {
     }
 
     void Locate(AppState s) {
+        if (s.Def.AdminInstall) {
+            MessageBox.Show(this, s.Def.Name + " si installa in Programmi: la suite lo cerca solo lì, così nessun altro programma può spacciarsi per lui.\n\nInstallalo con il pulsante Installa.", "Erodyne Suite", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
         using (var d = new OpenFileDialog { Title = "Dov'è " + s.Def.ExeName + "?", Filter = s.Def.ExeName + "|" + s.Def.ExeName + "|Programmi (*.exe)|*.exe", FileName = s.Def.ExeName }) {
             if (d.ShowDialog(this) != DialogResult.OK) return;
             Settings.Set("path." + s.Def.Id, d.FileName);

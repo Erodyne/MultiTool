@@ -6,12 +6,12 @@ using System.Windows.Forms;
 [assembly: AssemblyProduct("Erodyne Suite")]
 [assembly: AssemblyCompany("Erodyne")]
 [assembly: AssemblyDescription("Installa, aggiorna e avvia i programmi Erodyne")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
-[assembly: AssemblyInformationalVersion("1.1.0")]
+[assembly: AssemblyVersion("1.2.0.0")]
+[assembly: AssemblyFileVersion("1.2.0.0")]
+[assembly: AssemblyInformationalVersion("1.2.0")]
 
 public static class Program {
-    public const string Version = "1.1.0";
+    public const string Version = "1.2.0";
 
     public static void Log(object e) {
         try { System.IO.Directory.CreateDirectory(Settings.Dir); System.IO.File.AppendAllText(System.IO.Path.Combine(Settings.Dir, "errori.log"), DateTime.Now + " " + e + "\r\n"); } catch { }

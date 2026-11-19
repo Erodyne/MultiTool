@@ -10,6 +10,16 @@ jobs:
         run: |
           & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ /out:ErodyneSuite.exe /win32icon:ErodyneSuite.ico /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll src\*.cs
           if (-not (Test-Path ErodyneSuite.exe)) { throw 'csc fallito' }
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /out:T.exe /main:T /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll src\*.cs T.cs
+          .\T.exe
+          # firma: script PowerShell e verifica con le stesse API della suite
+          cd Strumenti; .\Firma-Release.ps1 -NuovaChiave | Out-Null; Set-Content prova.exe 'ciao'; .\Firma-Release.ps1 -File prova.exe
+          $pub = ([xml](Get-Content erodyne-firma-PRIVATA.xml -Raw)); $rsa = New-Object Security.Cryptography.RSACryptoServiceProvider; $rsa.FromXmlString((Get-Content erodyne-firma-PRIVATA.xml -Raw))
+          $pubXml = $rsa.ToXmlString($false); $v = New-Object Security.Cryptography.RSACryptoServiceProvider; $v.FromXmlString($pubXml)
+          $h = [Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes("$PWD\prova.exe")); $sig = [Convert]::FromBase64String((Get-Content prova.exe.sig -Raw).Trim())
+          "firma valida: " + $v.VerifyHash($h, [Security.Cryptography.CryptoConfig]::MapNameToOID('SHA256'), $sig)
+          $h[0] = $h[0] -bxor 1; "firma su file alterato: " + $v.VerifyHash($h, [Security.Cryptography.CryptoConfig]::MapNameToOID('SHA256'), $sig)
+          Remove-Item erodyne-firma-PRIVATA.xml; cd ..
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
           Add-Type @"
           using System; using System.Runtime.InteropServices;
