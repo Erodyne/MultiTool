@@ -5100,9 +5100,13 @@ Save-Json 'leftovers.json' $left
 
 $ScanLan = @'
 $sync.Status = 'Cerco i dispositivi nella rete locale…'
-$cfg = Get-NetIPConfiguration -ErrorAction SilentlyContinue | Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } | Select-Object -First 1
-if (-not $cfg) { throw 'Nessuna rete locale connessa' }
-$myIp = @($cfg.IPv4Address)[0].IPAddress; $gw = @($cfg.IPv4DefaultGateway)[0].NextHop
+# Get-NetIPConfiguration su alcuni PC va in errore con più schede: uso la rotta predefinita
+$rt = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object { $_.RouteMetric + $_.InterfaceMetric } | Select-Object -First 1
+if (-not $rt) { throw 'Nessuna rete locale connessa' }
+$ifx = $rt.InterfaceIndex; $gw = $rt.NextHop
+$myIp = (Get-NetIPAddress -InterfaceIndex $ifx -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike '169.254.*' } | Select-Object -First 1).IPAddress
+if (-not $myIp) { throw 'Nessuna rete locale connessa' }
+$mac = [string](Get-NetAdapter -InterfaceIndex $ifx -ErrorAction SilentlyContinue).MacAddress
 $base = ($myIp -split '\.')[0..2] -join '.'
 $pings = @{}
 foreach ($i in 1..254) { $a = "$base.$i"; try { $pings[$a] = (New-Object Net.NetworkInformation.Ping).SendPingAsync($a, 900) } catch {} }
@@ -5110,12 +5114,12 @@ try { [void][Threading.Tasks.Task]::WaitAll([Threading.Tasks.Task[]]@($pings.Val
 if (Test-Abort) { return }
 $found = @{}
 foreach ($a in $pings.Keys) { $t = $pings[$a]; if ($t.Status -eq 'RanToCompletion' -and $t.Result.Status -eq 'Success') { $found[$a] = @{ Ms = $t.Result.RoundtripTime; Mac = '' } } }
-foreach ($n in Get-NetNeighbor -InterfaceIndex $cfg.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue) {
+foreach ($n in Get-NetNeighbor -InterfaceIndex $ifx -AddressFamily IPv4 -ErrorAction SilentlyContinue) {
     if ($n.IPAddress -notlike "$base.*" -or $n.LinkLayerAddress -match '^(00-00-00-00-00-00|FF-FF-FF-FF-FF-FF)$' -or -not $n.LinkLayerAddress -or [string]$n.State -eq 'Unreachable') { continue }
     if (-not $found[$n.IPAddress]) { $found[$n.IPAddress] = @{ Ms = $null; Mac = '' } }
     $found[$n.IPAddress].Mac = $n.LinkLayerAddress
 }
-$found[$myIp] = @{ Ms = 0; Mac = (($cfg.NetAdapter.MacAddress) -replace ':', '-') }
+$found[$myIp] = @{ Ms = 0; Mac = ($mac -replace ':', '-') }
 $sync.Status = 'Leggo i nomi dei dispositivi…'
 $names = @{}
 foreach ($a in $found.Keys) { try { $names[$a] = [Net.Dns]::GetHostEntryAsync($a) } catch {} }
