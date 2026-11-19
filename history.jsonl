@@ -1,0 +1,33 @@
+﻿{"Time":"2026-11-19T05:23:11","Area":"Catalogo winget","Name":"VLC media player","Result":"Installato","Kind":"ok"}
+{"Time":"2026-11-19T05:23:22","Area":"Aggiorna programmi","Name":"7-Zip 23.01 (x64)","Result":"Aggiornato","Kind":"ok"}
+{"Time":"2026-11-19T05:25:25","Area":"Pulizia disco","Name":"File temporanei utente","Result":"Liberati 287 MB","Kind":"ok"}
+{"Time":"2026-11-19T05:25:25","Area":"Pulizia disco","Name":"File temporanei di Windows","Result":"Liberati 2 KB","Kind":"ok"}
+{"Time":"2026-11-19T05:25:26","Area":"Pulizia disco","Name":"Cache di Windows Update","Result":"Windows Update al lavoro: riprova più tardi","Kind":"skip"}
+{"Time":"2026-11-19T05:25:26","Area":"Pulizia disco","Name":"Log di Windows vecchi","Result":"Liberati 64 MB","Kind":"ok"}
+{"Time":"2026-11-19T05:25:29","Area":"Privacy","Name":"ID pubblicità disattivato","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-19T05:25:29","Area":"Privacy","Name":"Esperienze personalizzate disattivate","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-19T05:25:29","Area":"Privacy","Name":"Niente app promosse e suggerimenti in Start","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-19T05:25:29","Area":"Privacy","Name":"Niente pubblicità nella schermata di blocco","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-19T05:25:29","Area":"Privacy","Name":"Cronologia attività disattivata","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-19T05:25:29","Area":"Privacy","Name":"Niente risultati Bing nella ricerca di Start","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-19T05:25:29","Area":"Privacy","Name":"Copilot disattivato","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-19T05:25:29","Area":"Privacy","Name":"Recall disattivato","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-19T05:25:29","Area":"Privacy","Name":"Niente pubblicità in Esplora file e Start","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-19T05:25:29","Area":"Privacy","Name":"Nessuna richiesta di feedback","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-19T05:25:33","Area":"Servizi","Name":"Apache","Result":"Impostato su manuale","Kind":"ok"}
+{"Time":"2026-11-19T05:25:36","Area":"Servizi","Name":"Apache","Result":"Ripristinato","Kind":"ok"}
+{"Time":"2026-11-19T05:25:39","Area":"Avvio automatico","Name":"AzureArcSetup","Result":"Disattivato","Kind":"ok"}
+{"Time":"2026-11-19T05:25:44","Area":"Sicurezza","Name":"Protezione in tempo reale","Result":"Corretto","Kind":"ok"}
+{"Time":"2026-11-19T05:26:19","Area":"Sicurezza","Name":"Ultima scansione rapida","Result":"Corretto","Kind":"ok"}
+{"Time":"2026-11-19T05:26:19","Area":"Sicurezza","Name":"Controllo account utente (UAC)","Result":"Corretto","Kind":"ok"}
+{"Time":"2026-11-19T05:26:19","Area":"Sicurezza","Name":"Account Administrator integrato","Result":"Stai usando proprio questo account: crea prima un altro amministratore","Kind":"skip"}
+{"Time":"2026-11-19T05:26:19","Area":"Sicurezza","Name":"Desktop remoto","Result":"Corretto","Kind":"ok"}
+{"Time":"2026-11-19T05:26:19","Area":"Sicurezza","Name":"Esecuzione automatica da USB","Result":"Corretto","Kind":"ok"}
+{"Time":"2026-11-19T05:26:32","Area":"Backup","Name":"Documenti","Result":"0 file copiati","Kind":"ok"}
+{"Time":"2026-11-19T05:26:33","Area":"Backup","Name":"Desktop","Result":"0 file copiati","Kind":"ok"}
+{"Time":"2026-11-19T05:26:33","Area":"Backup","Name":"Immagini","Result":"0 file copiati","Kind":"ok"}
+{"Time":"2026-11-19T05:26:33","Area":"Backup","Name":"Preferiti dei browser","Result":"0 file copiati","Kind":"ok"}
+{"Time":"2026-11-19T05:26:35","Area":"Backup","Name":"Documenti","Result":"0 file copiati","Kind":"ok"}
+{"Time":"2026-11-19T05:26:35","Area":"Backup","Name":"Desktop","Result":"0 file copiati","Kind":"ok"}
+{"Time":"2026-11-19T05:26:35","Area":"Backup","Name":"Immagini","Result":"0 file copiati","Kind":"ok"}
+{"Time":"2026-11-19T05:26:35","Area":"Backup","Name":"Preferiti dei browser","Result":"0 file copiati","Kind":"ok"}
