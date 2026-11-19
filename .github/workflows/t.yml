@@ -14,7 +14,7 @@ jobs:
           $env:GH_TOKEN = '${{ github.token }}'
           gh release upload v2026.11.15.2 MultiTool-Setup-2026.11.15.2.exe.sig --clobber -R Erodyne/MultiTool; "upload firma: $LASTEXITCODE"
           .\T.exe
-          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" /VERSION; ""
+          "nsis choco: " + ((choco search nsis --exact --limit-output) -join " ")
           # utente standard, come un programma qualsiasi dell'utente
           New-Item -ItemType Directory C:\prova | Out-Null; icacls C:\prova /grant "Users:(OI)(CI)M" | Out-Null
           $pw = ConvertTo-SecureString 'Prova!2026xyzQ' -AsPlainText -Force; New-LocalUser utente -Password $pw | Out-Null
