@@ -9,6 +9,8 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
 using Microsoft.Win32;
+using System.Security.AccessControl;
+using System.Security.Principal;
 
 public class AppState {
     public AppDef Def;
@@ -269,6 +271,25 @@ public static class Manager {
         return true;
     }
 
+    // L'installer parte come amministratore dalla cartella del download: se un altro programma dell'utente
+    // ci aggiungesse una DLL, l'installer potrebbe caricarla con i diritti di amministratore.
+    // La cartella diventa di sola lettura anche per il suo proprietario (OWNER RIGHTS): l'utente può solo
+    // leggere e cancellare, non aggiungere file né cambiare i permessi. Gli amministratori restano liberi.
+    static void SealDir(string dir, string onlyFile) {
+        var inh = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+        var sec = new DirectorySecurity();
+        sec.SetAccessRuleProtection(true, false);
+        sec.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), FileSystemRights.FullControl, inh, PropagationFlags.None, AccessControlType.Allow));
+        sec.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), FileSystemRights.FullControl, inh, PropagationFlags.None, AccessControlType.Allow));
+        var limited = FileSystemRights.ReadAndExecute | FileSystemRights.Delete;
+        sec.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User, limited, inh, PropagationFlags.None, AccessControlType.Allow));
+        sec.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-3-4"), limited, inh, PropagationFlags.None, AccessControlType.Allow)); // OWNER RIGHTS
+        Directory.SetAccessControl(dir, sec);
+        // qualcuno ha fatto in tempo a infilare qualcosa prima della chiusura? allora niente installazione
+        foreach (var e in Directory.GetFileSystemEntries(dir))
+            if (!string.Equals(e, onlyFile, StringComparison.OrdinalIgnoreCase)) throw new Exception("file estraneo nella cartella del download: installazione bloccata");
+    }
+
     // Messaggio firmato: "erodyne-release-1|<programma>|<versione>|<sha256 del file>"
     public static byte[] SignedMessageHash(string id, string version, string fileHash) {
         var msg = "erodyne-release-1|" + id + "|" + Ver.Clean(version) + "|" + fileHash.ToLowerInvariant();
@@ -276,19 +297,23 @@ public static class Manager {
     }
 
     static string Download(AppState s, Action<double, string> progress) {
-        // cartella nuova a ogni download: l'installer non carica DLL estranee lasciate in %TEMP%
+        if (SafeUrl(s.AssetUrl, true) == null) throw new Exception("indirizzo di download non sicuro");
         var dir = Path.Combine(Path.Combine(Path.GetTempPath(), "ErodyneSuite"), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         var file = Path.Combine(dir, Path.GetFileName(s.AssetName));
-        if (SafeUrl(s.AssetUrl, true) == null) throw new Exception("indirizzo di download non sicuro");
+        FileStream outp;
+        try {
+            outp = new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            SealDir(dir, file); // da qui nessun programma dell'utente può aggiungere DLL accanto all'installer
+        } catch { TryDelete(file); try { Directory.Delete(dir); } catch { } throw; }
         var rq = (HttpWebRequest)WebRequest.Create(s.AssetUrl);
         rq.UserAgent = "ErodyneSuite/" + Program.Version;
         rq.Timeout = 30000; rq.ReadWriteTimeout = 60000;
         string hash;
         try {
+        using (outp)
         using (var rs = rq.GetResponse())
         using (var inp = rs.GetResponseStream())
-        using (var outp = File.Create(file))
         using (var sha = SHA256.Create()) {
             if (rs.ResponseUri.Scheme != Uri.UriSchemeHttps) throw new Exception("download non protetto (http)");
             long total = rs.ContentLength, done = 0;

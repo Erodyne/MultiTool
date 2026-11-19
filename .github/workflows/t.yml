@@ -11,13 +11,17 @@ jobs:
           & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ /out:ErodyneSuite.exe /win32icon:ErodyneSuite.ico /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll src\*.cs
           if (-not (Test-Path ErodyneSuite.exe)) { throw 'csc fallito' }
           & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /out:T.exe /main:T /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll src\*.cs T.cs
-          cd Strumenti; .\Firma-Release.ps1 -NuovaChiave | Out-Null; Set-Content prova.exe 'ciao'
-          .\Firma-Release.ps1 -File prova.exe -Programma multitool -Versione 2026.11.20.1
-          ..\T.exe erodyne-firma-PRIVATA.xml prova.exe.sig prova.exe; Remove-Item erodyne-firma-PRIVATA.xml; cd ..
-          # DLL piazzate accanto all'exe (file finti: se caricati, il programma va in crash)
-          mkdir piazzate; Copy-Item old.exe piazzate\vecchia.exe; Copy-Item ErodyneSuite.exe piazzate\nuova.exe
-          foreach ($d in 'dwmapi.dll','uxtheme.dll','version.dll','msftedit.dll','riched20.dll','gdiplus.dll','winmm.dll','profapi.dll') { Set-Content "piazzate\$d" 'non sono una dll' }
-          foreach ($e in 'vecchia','nuova') { $x = Start-Process "piazzate\$e.exe" -PassThru; Start-Sleep 12; $x.Refresh(); "dll piazzate, versione ${e}: viva=$(-not $x.HasExited) codice=$(if($x.HasExited){$x.ExitCode})"; if (-not $x.HasExited) { Stop-Process $x -Force }; Start-Sleep 2 }
+          $env:GH_TOKEN = '${{ github.token }}'
+          gh release upload v2026.11.15.2 MultiTool-Setup-2026.11.15.2.exe.sig --clobber -R Erodyne/MultiTool; "upload firma: $LASTEXITCODE"
+          .\T.exe
+          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" /VERSION; ""
+          # utente standard, come un programma qualsiasi dell'utente
+          New-Item -ItemType Directory C:\prova | Out-Null; icacls C:\prova /grant "Users:(OI)(CI)M" | Out-Null
+          $pw = ConvertTo-SecureString 'Prova!2026xyzQ' -AsPlainText -Force; New-LocalUser utente -Password $pw | Out-Null
+          Copy-Item T.exe C:\prova\; Copy-Item ErodyneSuite.exe C:\prova\
+          $cr = New-Object pscredential('utente', $pw)
+          Start-Process C:\prova\T.exe -ArgumentList 'acl','C:\prova' -Credential $cr -WorkingDirectory C:\prova -RedirectStandardOutput C:\prova\out.txt -Wait -LoadUserProfile
+          Get-Content C:\prova\out.txt
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
           Add-Type @"
           using System; using System.Runtime.InteropServices;
