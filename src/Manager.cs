@@ -56,6 +56,8 @@ public static class Ver {
 public static class Manager {
     static Manager() {
         try { ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072; } catch { }
+        // proxy aziendali che chiedono l'accesso di Windows
+        try { if (WebRequest.DefaultWebProxy != null) WebRequest.DefaultWebProxy.Credentials = CredentialCache.DefaultNetworkCredentials; } catch { }
     }
 
     // ---------- rilevamento locale ----------
@@ -73,7 +75,7 @@ public static class Manager {
         foreach (var dir in d.DefaultDirs) candidates.Add(Path.Combine(dir, d.ExeName));
         foreach (var c in candidates) {
             try {
-                if (File.Exists(c)) { s.ExePath = c; if (s.InstallDir == null) s.InstallDir = Path.GetDirectoryName(c); break; }
+                if (File.Exists(c)) { s.ExePath = Path.GetFullPath(c); s.InstallDir = Path.GetDirectoryName(s.ExePath); break; }
             } catch { }
         }
         if (s.ExePath != null && s.InstalledVersion == null) {
@@ -83,7 +85,7 @@ public static class Manager {
                 if (!string.IsNullOrEmpty(v) && v != "0.0.0.0") s.InstalledVersion = Ver.Clean(v);
             } catch { }
         }
-        if (s.ExePath == null) s.InstalledVersion = null;
+        if (s.ExePath == null) { s.InstalledVersion = null; s.InstallDir = null; }
     }
 
     static bool ReadUninstall(AppState s, RegistryHive hive, string name) {
@@ -138,7 +140,9 @@ public static class Manager {
         var o = new JavaScriptSerializer { MaxJsonLength = 8 * 1024 * 1024 }.DeserializeObject(json) as Dictionary<string, object>;
         if (o == null) throw new Exception("risposta non valida");
         var r = new Release();
-        r.Version = Ver.Clean(o["tag_name"] as string);
+        object tag; o.TryGetValue("tag_name", out tag);
+        r.Version = Ver.Clean(tag as string);
+        if (string.IsNullOrEmpty(r.Version)) throw new Exception("release senza numero di versione");
         object body; if (o.TryGetValue("body", out body)) r.Notes = body as string;
         object page; if (o.TryGetValue("html_url", out page)) r.Page = page as string;
         object assets;
@@ -146,49 +150,64 @@ public static class Manager {
             foreach (var a in (IEnumerable)assets) {
                 var d = a as Dictionary<string, object>;
                 if (d == null) continue;
-                r.Assets.Add(new KeyValuePair<string, string>(d["name"] as string, d["browser_download_url"] as string));
+                object n, u; d.TryGetValue("name", out n); d.TryGetValue("browser_download_url", out u);
+                if (n is string && u is string) r.Assets.Add(new KeyValuePair<string, string>((string)n, (string)u));
             }
         }
         return r;
     }
 
     public static void CheckOnline(AppState s) {
-        s.Error = null;
+        string ver = null, notes = null, page = null, asset = null, url = null, sha = null, err = null;
+        bool online = false;
         try {
             var r = LatestRelease(s.Def.Repo);
-            s.LatestVersion = r.Version; s.Notes = r.Notes; s.ReleasePage = r.Page;
-            s.AssetUrl = s.AssetName = s.ShaUrl = null;
+            ver = r.Version; notes = r.Notes; page = SafeUrl(r.Page);
             var rx = new Regex(s.Def.AssetPattern, RegexOptions.IgnoreCase);
-            foreach (var a in r.Assets) if (rx.IsMatch(a.Key)) { s.AssetName = a.Key; s.AssetUrl = a.Value; break; }
-            if (s.AssetName != null) {
+            foreach (var a in r.Assets) if (rx.IsMatch(a.Key) && SafeUrl(a.Value) != null) { asset = a.Key; url = a.Value; break; }
+            if (asset != null) {
                 foreach (var a in r.Assets) {
                     var n = a.Key.ToLowerInvariant();
-                    if (n == s.AssetName.ToLowerInvariant() + ".sha256" || n == "sha256sums.txt" || n == "sha256sums") { s.ShaUrl = a.Value; break; }
+                    if (n == asset.ToLowerInvariant() + ".sha256") { sha = a.Value; break; }
+                    if (n == "sha256sums.txt" || n == "sha256sums") sha = a.Value;
                 }
             }
-            s.Online = true;
+            online = true;
         } catch (WebException e) {
             var hr = e.Response as HttpWebResponse;
-            s.Online = hr != null;
-            s.LatestVersion = null; s.AssetUrl = null;
-            s.Error = hr != null && hr.StatusCode == HttpStatusCode.NotFound
-                ? "Nessuna versione pubblicata su GitHub (" + s.Def.Repo + ")"
-                : "Impossibile contattare GitHub";
+            online = hr != null;
+            if (hr == null) err = "Impossibile contattare GitHub";
+            else if (hr.StatusCode == HttpStatusCode.NotFound) err = "Nessuna versione pubblicata su GitHub (" + s.Def.Repo + ")";
+            else if ((int)hr.StatusCode == 403 || (int)hr.StatusCode == 429) err = "Troppi controlli verso GitHub: riprova tra qualche minuto";
+            else err = "GitHub ha risposto con errore " + (int)hr.StatusCode;
         } catch (Exception e) {
-            s.Error = "Controllo non riuscito: " + e.Message;
+            online = true;
+            err = "Controllo non riuscito: " + e.Message;
         }
-        s.Checked = true;
+        // tutto insieme, così l'interfaccia non vede stati a metà
+        s.LatestVersion = ver; s.Notes = notes; s.ReleasePage = page;
+        s.AssetName = asset; s.ShaUrl = sha; s.AssetUrl = url;
+        s.Error = err; s.Online = online; s.Checked = true;
+    }
+
+    // Solo indirizzi web: niente file://, script o altri protocolli dalle note di rilascio
+    public static string SafeUrl(string u) {
+        Uri x;
+        if (string.IsNullOrEmpty(u) || !Uri.TryCreate(u, UriKind.Absolute, out x)) return null;
+        return x.Scheme == Uri.UriSchemeHttps || x.Scheme == Uri.UriSchemeHttp ? x.AbsoluteUri : null;
     }
 
     // ---------- download e installazione ----------
     public static string Download(AppState s, Action<double, string> progress) {
-        var dir = Path.Combine(Path.GetTempPath(), "ErodyneSuite");
+        // cartella nuova a ogni download: l'installer non carica DLL estranee lasciate in %TEMP%
+        var dir = Path.Combine(Path.Combine(Path.GetTempPath(), "ErodyneSuite"), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         var file = Path.Combine(dir, Path.GetFileName(s.AssetName));
         var rq = (HttpWebRequest)WebRequest.Create(s.AssetUrl);
         rq.UserAgent = "ErodyneSuite/" + Program.Version;
         rq.Timeout = 30000; rq.ReadWriteTimeout = 60000;
         string hash;
+        try {
         using (var rs = rq.GetResponse())
         using (var inp = rs.GetResponseStream())
         using (var outp = File.Create(file))
@@ -204,26 +223,38 @@ public static class Manager {
                 }
             }
             sha.TransformFinalBlock(buf, 0, 0);
+            if (total > 0 && done != total) throw new Exception("download interrotto (" + Mb(done) + " di " + Mb(total) + ")");
+            if (done == 0) throw new Exception("il file scaricato è vuoto");
             hash = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
         }
+        } catch { TryDelete(file); throw; }
         if (s.ShaUrl != null) {
             progress(-1, "Verifica dell'impronta SHA-256");
             var list = HttpGet(s.ShaUrl);
-            string expected = null;
+            // riga con il nome del file; un .sha256 dedicato può contenere solo l'impronta
+            string expected = null, only = null; int count = 0;
             foreach (var line in list.Split('\n')) {
                 var m = Regex.Match(line, @"\b([0-9a-fA-F]{64})\b");
                 if (!m.Success) continue;
-                if (expected == null || line.IndexOf(s.AssetName, StringComparison.OrdinalIgnoreCase) >= 0) {
-                    expected = m.Groups[1].Value.ToLowerInvariant();
-                    if (line.IndexOf(s.AssetName, StringComparison.OrdinalIgnoreCase) >= 0) break;
-                }
+                count++; only = m.Groups[1].Value.ToLowerInvariant();
+                var rest = line.Substring(m.Index + 64).Trim().TrimStart('*').Trim();
+                if (rest.Equals(s.AssetName, StringComparison.OrdinalIgnoreCase)) { expected = only; break; }
             }
-            if (expected != null && expected != hash) {
-                try { File.Delete(file); } catch { }
+            if (expected == null && count == 1 && s.ShaUrl.EndsWith(".sha256", StringComparison.OrdinalIgnoreCase)) expected = only;
+            if (expected == null) {
+                TryDelete(file);
+                throw new Exception("impronta SHA-256 di " + s.AssetName + " non trovata nella release");
+            }
+            if (expected != hash) {
+                TryDelete(file);
                 throw new Exception("il file scaricato non corrisponde all'impronta pubblicata");
             }
         }
         return file;
+    }
+
+    public static void TryDelete(string file) {
+        try { File.Delete(file); Directory.Delete(Path.GetDirectoryName(file)); } catch { }
     }
 
     static string Mb(long b) { return (b / 1048576.0).ToString("0.0") + " MB"; }
@@ -246,7 +277,19 @@ public static class Manager {
             // gli uninstaller NSIS si copiano in %TEMP% e tornano subito: attende che il programma sparisca
             p.WaitForExit();
         }
-        for (int i = 0; i < 120 && File.Exists(s.ExePath ?? ""); i++) System.Threading.Thread.Sleep(500);
+        // attende finché il programma sparisce o l'uninstaller (copia temporanea Au_.exe di NSIS) è ancora aperto
+        for (int i = 0; i < 1200 && File.Exists(s.ExePath ?? ""); i++) {
+            if (i >= 20 && !UninstallerRunning()) break;
+            System.Threading.Thread.Sleep(500);
+        }
+    }
+
+    static bool UninstallerRunning() {
+        foreach (var p in Process.GetProcesses()) {
+            try { var n = p.ProcessName; if (n.StartsWith("Au_") || n.StartsWith("Un_") || n.StartsWith("_iu", StringComparison.OrdinalIgnoreCase) || n.StartsWith("unins", StringComparison.OrdinalIgnoreCase)) return true; }
+            catch { } finally { p.Dispose(); }
+        }
+        return false;
     }
 
     public static void Launch(AppState s) {
@@ -256,5 +299,10 @@ public static class Manager {
 
     public static void Open(string target) {
         try { Process.Start(new ProcessStartInfo(target) { UseShellExecute = true }); } catch { }
+    }
+    public static void OpenUrl(string url) { url = SafeUrl(url); if (url != null) Open(url); }
+    public static void OpenFolder(string dir) {
+        if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
+        try { Process.Start("explorer.exe", "\"" + dir + "\""); } catch { }
     }
 }

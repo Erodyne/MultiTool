@@ -90,10 +90,10 @@ public static class Th {
         }
     }
 
-    public static void Pill(Graphics g, string text, Color c, PointF at, out float width) {
+    public static void Pill(Graphics g, string text, Color c, PointF at, out float width, float max = 10000) {
         using (var f = F(8.5f, FontStyle.Bold)) {
             var sz = g.MeasureString(text, f);
-            var r = new RectangleF(at.X, at.Y, sz.Width + 22, 24);
+            var r = new RectangleF(at.X, at.Y, Math.Min(sz.Width + 22, max), 24);
             using (var p = Round(r, 12))
             using (var b = new SolidBrush(Color.FromArgb(38, c))) g.FillPath(b, p);
             using (var b = new SolidBrush(c)) g.FillEllipse(b, r.X + 9, r.Y + 9, 6, 6);
@@ -108,7 +108,7 @@ public enum BtnKind { Primary, Secondary, Ghost, Danger, OnColor }
 public class Btn : Control {
     public BtnKind Kind = BtnKind.Secondary;
     public string Glyph;
-    public Color? C1, C2;
+    public Color? C1, C2, HoverColor;
     bool hover, down;
 
     public Btn() {
@@ -117,6 +117,10 @@ public class Btn : Control {
         Cursor = Cursors.Hand;
         Font = Th.F(9.5f, FontStyle.Bold);
         Height = 40;
+    }
+    protected override void WndProc(ref Message m) {
+        if (m.Msg == 0x84 && EdgeHelper.OnEdge(this, m.LParam)) { m.Result = (IntPtr)(-1); return; }
+        base.WndProc(ref m);
     }
     public int Measure() {
         using (var g = CreateGraphics()) return (int)g.MeasureString(Text, Font).Width + 36 + (Glyph != null && Th.HasGlyphs ? 22 : 0);
@@ -141,13 +145,13 @@ public class Btn : Control {
                     fg = Color.White;
                     break;
                 case BtnKind.OnColor:
-                    using (var b = new SolidBrush(Color.FromArgb(hover ? 70 : 46, 255, 255, 255))) g.FillPath(b, p);
-                    using (var pen = new Pen(Color.FromArgb(90, 255, 255, 255))) g.DrawPath(pen, p);
-                    fg = Color.White;
+                    using (var b = new SolidBrush(Color.FromArgb(!Enabled ? 22 : hover ? 70 : 46, 255, 255, 255))) g.FillPath(b, p);
+                    using (var pen = new Pen(Color.FromArgb(Enabled ? 90 : 45, 255, 255, 255))) g.DrawPath(pen, p);
+                    fg = Color.FromArgb(Enabled ? 255 : 150, 255, 255, 255);
                     break;
                 case BtnKind.Ghost:
-                    if (hover) using (var b = new SolidBrush(Th.Surface2)) g.FillPath(b, p);
-                    fg = Enabled ? (hover ? Th.Text : Th.Dim) : Th.Faint;
+                    if (hover && Enabled) using (var b = new SolidBrush(HoverColor ?? Th.Surface2)) g.FillPath(b, p);
+                    fg = Enabled ? (hover ? (HoverColor.HasValue ? Color.White : Th.Text) : Th.Dim) : Th.Faint;
                     break;
                 case BtnKind.Danger:
                     using (var b = new SolidBrush(hover ? Color.FromArgb(46, Th.Red) : Th.Surface2)) g.FillPath(b, p);
@@ -172,8 +176,20 @@ public class Btn : Control {
 
 // Pannello disegnato a mano, senza sfarfallio
 public class Canvas : Panel {
+    protected override void WndProc(ref Message m) {
+        if (m.Msg == 0x84 && EdgeHelper.OnEdge(this, m.LParam)) { m.Result = (IntPtr)(-1); return; }
+        base.WndProc(ref m);
+    }
     public Canvas() {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
         BackColor = Th.Bg;
+    }
+}
+
+// Sui bordi della finestra i controlli figli lasciano passare il mouse alla finestra, che gestisce il ridimensionamento
+public static class EdgeHelper {
+    public static bool OnEdge(Control c, IntPtr lp) {
+        var f = c.FindForm() as MainForm;
+        return f != null && f.HitEdge(lp) != 0;
     }
 }

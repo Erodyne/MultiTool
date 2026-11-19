@@ -8,19 +8,27 @@ jobs:
       - uses: actions/checkout@v4
       - shell: pwsh
         run: |
-          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /out:csc.exe /win32icon:ErodyneSuite.ico /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll src\*.cs
-          if (-not (Test-Path csc.exe)) { throw 'csc fallito' }
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ /out:ErodyneSuite.exe /win32icon:ErodyneSuite.ico /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll src\*.cs
+          if (-not (Test-Path ErodyneSuite.exe)) { throw 'csc fallito' }
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-          foreach ($exe in 'mcs.exe','csc.exe') {
-            Remove-Item "$env:APPDATA\ErodyneSuite\errori.log" -ErrorAction SilentlyContinue
-            $p = Start-Process ".\$exe" -PassThru; Start-Sleep 20
-            "== $exe vivo: $(-not $p.HasExited)  exit: $(if($p.HasExited){$p.ExitCode})"
-            Get-Content "$env:APPDATA\ErodyneSuite\errori.log" -ErrorAction SilentlyContinue
-            $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds; $bmp = New-Object Drawing.Bitmap $b.Width, $b.Height
-            [Drawing.Graphics]::FromImage($bmp).CopyFromScreen(0,0,0,0,$bmp.Size); $bmp.Save("$PWD\$exe.png")
-            if (-not $p.HasExited) { Stop-Process $p -Force }
-          }
+          Add-Type @"
+          using System; using System.Runtime.InteropServices;
+          public class W { [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, int m, IntPtr w, IntPtr l);
+            [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+            public struct RECT { public int L, T, R, B; } }
+          "@
+          function Shot($n) { $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds; $bmp = New-Object Drawing.Bitmap $b.Width, $b.Height
+            [Drawing.Graphics]::FromImage($bmp).CopyFromScreen(0,0,0,0,$bmp.Size); $bmp.Save("$PWD\$n.png") }
+          $p = Start-Process .\ErodyneSuite.exe -PassThru; Start-Sleep 15; $p.Refresh()
+          "vivo: $(-not $p.HasExited)"; Shot normal
+          $q = Start-Process .\ErodyneSuite.exe -PassThru; Start-Sleep 4; "seconda istanza uscita: $($q.HasExited)"
+          $h = $p.MainWindowHandle
+          [W]::SendMessage($h, 0x112, [IntPtr]0xF030, [IntPtr]::Zero) | Out-Null; Start-Sleep 3
+          $r = New-Object W+RECT; [W]::GetWindowRect($h, [ref]$r) | Out-Null
+          "massimizzata: $($r.L),$($r.T),$($r.R),$($r.B)  area: $([Windows.Forms.Screen]::PrimaryScreen.WorkingArea)"; Shot max
+          Get-Content "$env:APPDATA\ErodyneSuite\errori.log" -ErrorAction SilentlyContinue
+          Stop-Process $p -Force -ErrorAction SilentlyContinue
       - shell: pwsh
         run: |
           git config user.name ci; git config user.email ci@example.com
-          git add -f csc.exe *.png; git commit -qm "build"; git push -q origin HEAD:ci-suite-out --force
+          git add -f ErodyneSuite.exe *.png; git commit -qm "build"; git push -q origin HEAD:ci-suite-out --force

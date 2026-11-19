@@ -16,6 +16,7 @@ public class MainForm : Form {
     double percent = -1;
     string suiteUpdate, suitePage;
     bool queueRunning;
+    int checking; // controlli online ancora in corso
 
     readonly Canvas title = new Canvas(), side = new Canvas(), content = new Canvas(), bar = new Canvas();
     readonly Btn bMin = new Btn { Kind = BtnKind.Ghost, Text = "—" }, bMax = new Btn { Kind = BtnKind.Ghost, Text = "▢" }, bClose = new Btn { Kind = BtnKind.Ghost, Text = "✕" };
@@ -55,12 +56,15 @@ public class MainForm : Form {
 
         // barra del titolo
         title.Paint += PaintTitle;
-        title.MouseDown += (s, e) => { if (e.Button == MouseButtons.Left) DragWindow(); };
-        title.DoubleClick += (s, e) => ToggleMax();
+        title.MouseDown += (s, e) => {
+            if (e.Button != MouseButtons.Left) return;
+            if (e.Clicks == 2) ToggleMax(); else DragWindow();
+        };
         foreach (var b in new[] { bMin, bMax, bClose }) { b.Size = new Size(46, TitleH); b.Font = Th.F(10f); title.Controls.Add(b); }
         bMin.Click += (s, e) => WindowState = FormWindowState.Minimized;
         bMax.Click += (s, e) => ToggleMax();
         bClose.Click += (s, e) => Close();
+        bClose.HoverColor = Th.Red;
         title.Resize += (s, e) => { bClose.Left = title.Width - 46; bMax.Left = bClose.Left - 46; bMin.Left = bMax.Left - 46; };
 
         side.Paint += PaintSide;
@@ -69,7 +73,7 @@ public class MainForm : Form {
         side.MouseClick += (s, e) => {
             int h = SideHit(e.Location);
             if (h == -2) RefreshAll(true);
-            else if (h == -3 && suitePage != null) Manager.Open(suitePage);
+            else if (h == -3 && suitePage != null) Manager.OpenUrl(suitePage);
             else if (h != -99) Go(h);
         };
 
@@ -92,13 +96,13 @@ public class MainForm : Form {
 
         pMain.Font = Th.F(11f, FontStyle.Bold);
         pMain.Click += (s, e) => MainAction(Cur);
-        pFolder.Click += (s, e) => { if (Cur.InstallDir != null) Manager.Open(Cur.InstallDir); };
-        pGit.Click += (s, e) => Manager.Open(Cur.ReleasePage ?? "https://github.com/" + Cur.Def.Repo + "/releases");
+        pFolder.Click += (s, e) => Manager.OpenFolder(Cur.InstallDir);
+        pGit.Click += (s, e) => Manager.OpenUrl(Cur.ReleasePage ?? "https://github.com/" + Cur.Def.Repo + "/releases");
         pLocate.Click += (s, e) => Locate(Cur);
         pUninst.Click += (s, e) => UninstallApp(Cur);
         notes.BorderStyle = BorderStyle.None; notes.ReadOnly = true; notes.BackColor = Th.Surface; notes.ForeColor = Th.Dim;
         notes.Font = Th.F(9.5f); notes.ScrollBars = RichTextBoxScrollBars.Vertical; notes.DetectUrls = true;
-        notes.LinkClicked += (s, e) => Manager.Open(e.LinkText);
+        notes.LinkClicked += (s, e) => Manager.OpenUrl(e.LinkText);
         foreach (Control c in new Control[] { pMain, pFolder, pGit, pLocate, pUninst, notes }) content.Controls.Add(c);
 
         Activated += (s, e) => { if (!AnyBusy) { foreach (var st in states) Manager.DetectLocal(st); RefreshUi(); } };
@@ -118,7 +122,7 @@ public class MainForm : Form {
     void ToggleMax() { WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized; }
 
     protected override CreateParams CreateParams {
-        get { var cp = base.CreateParams; cp.Style |= 0x20000 | 0x40000; return cp; } // WS_MINIMIZEBOX | WS_SIZEBOX
+        get { var cp = base.CreateParams; cp.Style |= 0x10000 | 0x20000 | 0x40000; return cp; } // WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SIZEBOX
     }
     protected override void OnHandleCreated(EventArgs e) {
         base.OnHandleCreated(e);
@@ -126,16 +130,38 @@ public class MainForm : Form {
         try { int dark = 1; DwmSetWindowAttribute(Handle, 20, ref dark, 4); } catch { }
     }
     protected override void WndProc(ref Message m) {
-        if (m.Msg == 0x83 && m.WParam != IntPtr.Zero) { m.Result = IntPtr.Zero; return; } // nessun bordo di sistema
-        base.WndProc(ref m);
-        if (m.Msg == 0x84 && WindowState == FormWindowState.Normal) { // WM_NCHITTEST: ridimensionamento dai bordi
-            var p = PointToClient(new Point(m.LParam.ToInt32() & 0xFFFF, (int)((m.LParam.ToInt64() >> 16) & 0xFFFF)));
-            const int g = 7; bool l = p.X < g, r = p.X > Width - g, t = p.Y < g, b = p.Y > Height - g;
-            if (t && l) m.Result = (IntPtr)13; else if (t && r) m.Result = (IntPtr)14;
-            else if (b && l) m.Result = (IntPtr)16; else if (b && r) m.Result = (IntPtr)17;
-            else if (l) m.Result = (IntPtr)10; else if (r) m.Result = (IntPtr)11;
-            else if (t) m.Result = (IntPtr)12; else if (b) m.Result = (IntPtr)15;
+        if (m.Msg == 0x83 && m.WParam != IntPtr.Zero) { // WM_NCCALCSIZE: nessun bordo di sistema
+            if (WindowState == FormWindowState.Maximized) {
+                // massimizzata, Windows sposta la finestra oltre lo schermo dello spessore del bordo: la riporta nell'area di lavoro
+                var wa = Screen.FromHandle(Handle).WorkingArea;
+                Marshal.WriteInt32(m.LParam, 0, wa.Left); Marshal.WriteInt32(m.LParam, 4, wa.Top);
+                Marshal.WriteInt32(m.LParam, 8, wa.Right); Marshal.WriteInt32(m.LParam, 12, wa.Bottom);
+            }
+            m.Result = IntPtr.Zero; return;
         }
+        if (m.Msg == 0x84) { int h = HitEdge(m.LParam); if (h != 0) { m.Result = (IntPtr)h; return; } }
+        base.WndProc(ref m);
+    }
+
+    // Bordi per ridimensionare: valgono anche sopra i pannelli figli (vedi Canvas/Btn, che restituiscono HTTRANSPARENT)
+    public int HitEdge(IntPtr lp) {
+        if (WindowState != FormWindowState.Normal) return 0;
+        long v = lp.ToInt64();
+        var p = PointToClient(new Point((short)(v & 0xFFFF), (short)((v >> 16) & 0xFFFF)));
+        const int g = 7; bool l = p.X < g, r = p.X >= Width - g, t = p.Y < g, b = p.Y >= Height - g;
+        if (t && l) return 13; if (t && r) return 14; if (b && l) return 16; if (b && r) return 17;
+        if (l) return 10; if (r) return 11; if (t) return 12; if (b) return 15;
+        return 0;
+    }
+    protected override void OnSizeChanged(EventArgs e) {
+        base.OnSizeChanged(e);
+        bMax.Text = WindowState == FormWindowState.Maximized ? "❐" : "▢";
+    }
+    protected override void OnFormClosing(FormClosingEventArgs e) {
+        if (AnyBusy && e.CloseReason == CloseReason.UserClosing &&
+            MessageBox.Show(this, "È in corso un'installazione. Chiudendo ora non saprai se è andata a buon fine.\n\nChiudere comunque?", "Erodyne Suite",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) e.Cancel = true;
+        base.OnFormClosing(e);
     }
     protected override void OnPaint(PaintEventArgs e) {
         base.OnPaint(e);
@@ -158,7 +184,7 @@ public class MainForm : Form {
         int upd = states.Count(x => x.UpdateAvailable);
         hUpdateAll.Text = upd > 0 ? "Aggiorna tutto (" + upd + ")" : "Tutto aggiornato";
         hUpdateAll.Enabled = upd > 0 && !AnyBusy;
-        hCheck.Enabled = !AnyBusy;
+        hCheck.Enabled = !AnyBusy && checking == 0;
         for (int i = 0; i < states.Count; i++) {
             var s = states[i];
             cardMain[i].Text = ActionText(s);
@@ -174,11 +200,24 @@ public class MainForm : Form {
             pLocate.Visible = !c.Installed;
             string txt = string.IsNullOrEmpty(c.Notes)
                 ? (c.Checked ? (c.Error ?? "Nessuna nota per questa versione.") : "Controllo della versione su GitHub…")
-                : c.Notes.Replace("\r\n", "\n").Replace("**", "").Replace("## ", "").Replace("### ", "");
+                : CleanNotes(c.Notes);
             if (notes.Text != txt.Replace("\r\n", "\n")) notes.Text = txt;
         }
         Layout_();
         content.Invalidate(); side.Invalidate(); bar.Invalidate();
+    }
+
+    // Markdown delle note di GitHub in testo semplice
+    static string CleanNotes(string md) {
+        var t = md.Replace("\r\n", "\n");
+        t = System.Text.RegularExpressions.Regex.Replace(t, @"!\[[^\]]*\]\([^)]*\)", "");
+        t = System.Text.RegularExpressions.Regex.Replace(t, @"\[([^\]]+)\]\((https?://[^)\s]+)\)", "$1 ($2)");
+        t = System.Text.RegularExpressions.Regex.Replace(t, @"(?m)^\s{0,3}#{1,6}\s+", "");
+        t = System.Text.RegularExpressions.Regex.Replace(t, @"(?m)^(\s*)[*+]\s+", "$1• ");
+        t = System.Text.RegularExpressions.Regex.Replace(t, @"(?m)^(\s*)-\s+", "$1• ");
+        t = t.Replace("**", "").Replace("__", "").Replace("`", "");
+        t = System.Text.RegularExpressions.Regex.Replace(t, @"<!--.*?-->", "", System.Text.RegularExpressions.RegexOptions.Singleline);
+        return t.Trim();
     }
 
     static string ActionText(AppState s) {
@@ -191,7 +230,7 @@ public class MainForm : Form {
     bool ActionEnabled(AppState s) {
         if (s.Busy) return false;
         if (s.Installed && !s.UpdateAvailable) return true;
-        return s.CanDownload && !queueRunning;
+        return s.CanDownload && !AnyBusy; // un installer alla volta
     }
 
     // ---------- azioni ----------
@@ -199,10 +238,11 @@ public class MainForm : Form {
         if (s.Busy) return;
         if (s.Installed && !s.UpdateAvailable) {
             try { Manager.Launch(s); SetStatus(s.Def.Name + " avviato", -1); }
+            catch (Win32Exception e) { SetStatus(e.NativeErrorCode == 1223 ? "Avvio annullato" : "Avvio non riuscito: " + e.Message, -1); }
             catch (Exception e) { SetStatus("Avvio non riuscito: " + e.Message, -1); }
             return;
         }
-        if (s.CanDownload) Run(s, null);
+        if (s.CanDownload && !AnyBusy) Run(s, null);
     }
 
     void Run(AppState s, Action done) {
@@ -210,13 +250,12 @@ public class MainForm : Form {
         bool update = s.Installed;
         RefreshUi();
         ThreadPool.QueueUserWorkItem(_ => {
-            string msg;
+            string msg, file = null;
             try {
-                var file = Manager.Download(s, (p, t) => { s.Percent = p; SetStatus(s.Def.Name + ": " + t, p); RefreshUi(); });
+                file = Manager.Download(s, (p, t) => { s.Percent = p; SetStatus(s.Def.Name + ": " + t, p); RefreshUi(); });
                 s.Percent = -1;
                 SetStatus(s.Def.Name + ": installazione in corso…", -1); RefreshUi();
                 int code = Manager.RunInstaller(s, file);
-                try { File.Delete(file); } catch { }
                 Manager.DetectLocal(s);
                 msg = code == 0 && s.Installed
                     ? s.Def.Name + (update ? " aggiornato" : " installato") + (s.InstalledVersion != null ? " (" + s.InstalledVersion + ")" : "")
@@ -227,6 +266,7 @@ public class MainForm : Form {
                 msg = s.Def.Name + ": " + e.Message;
                 s.Error = e.Message;
             }
+            if (file != null) Manager.TryDelete(file);
             s.Busy = false; s.Percent = -1;
             SetStatus(msg, -1);
             RefreshUi();
@@ -271,16 +311,19 @@ public class MainForm : Form {
     }
 
     void RefreshAll(bool online) {
-        if (AnyBusy) return;
+        if (AnyBusy) { SetStatus("Attendi la fine dell'operazione in corso", -1); return; }
+        if (online && checking > 0) return;
         foreach (var s in states) Manager.DetectLocal(s);
         RefreshUi();
         if (!online) return;
         SetStatus("Controllo aggiornamenti su GitHub…", -1);
         int left = states.Count;
+        checking = left;
         foreach (var s in states) {
             var st = s;
             ThreadPool.QueueUserWorkItem(_ => {
                 Manager.CheckOnline(st);
+                Interlocked.Decrement(ref checking);
                 if (Interlocked.Decrement(ref left) == 0) {
                     int n = states.Count(x => x.UpdateAvailable);
                     bool off = states.All(x => !x.Online);
@@ -466,7 +509,7 @@ public class MainForm : Form {
             using (var f = Th.F(14f, FontStyle.Bold)) Th.Text_(g, s.Def.Name, f, Th.Text, new RectangleF(c.X + 20, c.Y + 132, c.Width - 40, 28));
             using (var f = Th.F(9.5f)) Th.Text_(g, s.Def.Tagline, f, Th.Dim, new RectangleF(c.X + 20, c.Y + 160, c.Width - 40, 22));
             Color dot; string line = StatusLine(s, out dot);
-            float pw; Th.Pill(g, line, dot == Th.Faint ? Th.Dim : dot, new PointF(c.X + 20, c.Y + 192), out pw);
+            float pw; Th.Pill(g, line, dot == Th.Faint ? Th.Dim : dot, new PointF(c.X + 20, c.Y + 192), out pw, c.Width - 40);
             float fy = c.Y + 232;
             using (var f = Th.F(9f)) foreach (var feat in s.Def.Features) {
                 float h = g.MeasureString(feat, f, (int)(c.Width - 54)).Height + 6;
