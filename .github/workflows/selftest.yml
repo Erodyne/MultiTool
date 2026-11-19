@@ -57,6 +57,7 @@ jobs:
           "search codice $($r2.Code), lunghezza $($r2.Out.Length)"; $r2.Out | Select-Object -First 1 | ForEach-Object { $_.Substring(0, [Math]::Min(1500, $_.Length)) }
           "righe ricerca: $(@(ConvertFrom-WingetTable $r2.Out).Count)"
           "installati (export): $((Get-WingetInstalled).Count)"
+          try { "come utente (atteso 7): $(Invoke-AsUser "$env:SystemRoot\System32\cmd.exe" '/c exit 7' $env:SystemRoot)" } catch { "come utente: ERRORE $($_.Exception.Message)" }
 
       - name: Collaudo dell'interfaccia (tutte le sezioni e le azioni)
         shell: pwsh

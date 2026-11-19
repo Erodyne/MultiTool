@@ -3,7 +3,7 @@
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.19.2'
+$AppVersion = '2026.11.19.3'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
@@ -87,6 +87,28 @@ function Repair-DataAcl {
 function Test-OtherInstance {
     $me = $PID; $sp = [regex]::Escape($ScriptPath)
     [bool]@(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.ProcessId -ne $me -and $_.CommandLine -match "-File\s+`"?$sp" }).Count
+}
+function Invoke-AsUser([string]$File, [string]$Arguments, [string]$Dir) {
+    # avvia un programma con i permessi normali dell'utente (non da amministratore) e ne aspetta la fine
+    $u = Get-UserCtx
+    $acct = if ($u.Other -and $u.Sid) { ([Security.Principal.SecurityIdentifier]$u.Sid).Translate([Security.Principal.NTAccount]).Value } else { [Security.Principal.WindowsIdentity]::GetCurrent().Name }
+    if (-not $Dir -or -not (Test-Path $Dir)) { $Dir = $env:SystemRoot }
+    $tn = 'MultiTool-Utente-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $exe = "`"$($File.Trim('"'))`""
+    $act = if ($Arguments) { New-ScheduledTaskAction -Execute $exe -Argument $Arguments -WorkingDirectory $Dir } else { New-ScheduledTaskAction -Execute $exe -WorkingDirectory $Dir }
+    $pr = New-ScheduledTaskPrincipal -UserId $acct -LogonType Interactive -RunLevel Limited
+    $st = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+    Register-ScheduledTask -TaskName $tn -TaskPath '\' -Action $act -Principal $pr -Settings $st -Force -ErrorAction Stop | Out-Null
+    try {
+        Start-ScheduledTask -TaskName $tn -ErrorAction Stop
+        Start-Sleep -Seconds 2
+        $end = (Get-Date).AddHours(2)
+        while ((Get-Date) -lt $end -and [string](Get-ScheduledTask -TaskName $tn -ErrorAction Stop).State -eq 'Running') { Start-Sleep -Seconds 2 }
+        $c = [int64](Get-ScheduledTaskInfo -TaskName $tn -ErrorAction Stop).LastTaskResult
+        if ($c -eq 267011) { throw 'il disinstallatore non è partito con l''account dell''utente' }
+        if ($c -gt [int]::MaxValue) { $c -= 4294967296 }
+        [int]$c
+    } finally { Unregister-ScheduledTask -TaskName $tn -Confirm:$false -ErrorAction SilentlyContinue }
 }
 function Get-OemEncoding { [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) }
 function Invoke-Hidden([string]$File, [string]$Arguments, [int]$TimeoutSec = 0, [Text.Encoding]$Enc) {
@@ -783,14 +805,25 @@ function Wait-Uninstallers([datetime]$Since, [int]$Minutes = 5) {
 }
 
 function Find-LhmDll {
-    foreach ($r in "$env:LOCALAPPDATA\Microsoft\WinGet\Packages", "$env:ProgramFiles\WinGet\Packages", "$env:ProgramFiles\LibreHardwareMonitor") {
-        if (-not (Test-Path $r)) { continue }
-        $f = Get-ChildItem $r -Recurse -Filter 'LibreHardwareMonitorLib.dll' -ErrorAction SilentlyContinue |
-             Sort-Object @{ e = { if ($_.FullName -match 'net4') { 0 } elseif ($_.FullName -match 'net\d') { 2 } else { 1 } } }, @{ e = { $_.LastWriteTime }; Descending = $true } |
-             Select-Object -First 1
-        if ($f) { return $f.FullName }
+    # la libreria viene caricata nel processo amministratore: la uso solo da una copia nella cartella dati protetta,
+    # mai direttamente dalla cartella utente di winget (che altri programmi dell'utente potrebbero modificare)
+    $pick = { param($r) Get-ChildItem $r -Recurse -Filter 'LibreHardwareMonitorLib.dll' -ErrorAction SilentlyContinue |
+              Sort-Object @{ e = { if ($_.FullName -match 'net4') { 0 } elseif ($_.FullName -match 'net\d') { 2 } else { 1 } } }, @{ e = { $_.LastWriteTime }; Descending = $true } | Select-Object -First 1 }
+    $safe = Join-Path $DataDir 'LHM'
+    $cur = if (Test-Path $safe) { & $pick $safe } else { $null }
+    $src = $null
+    foreach ($r in "$env:ProgramFiles\WinGet\Packages", "$env:ProgramFiles\LibreHardwareMonitor", "$env:LOCALAPPDATA\Microsoft\WinGet\Packages") {
+        if (Test-Path $r) { $src = & $pick $r; if ($src) { break } }
     }
-    $null
+    if ($src -and (-not $cur -or $src.LastWriteTime -gt $cur.LastWriteTime)) {
+        try {
+            Remove-Item $safe -Recurse -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory $safe -Force | Out-Null
+            Copy-Item (Join-Path $src.DirectoryName '*') $safe -Recurse -Force -ErrorAction Stop
+            $cur = & $pick $safe
+        } catch {}
+    }
+    if ($cur) { $cur.FullName } else { $null }
 }
 
 function Get-HwInventory {
@@ -3794,6 +3827,8 @@ $TrEn['Stress test CPU'] = 'CPU stress test'
 $TrEn['Risveglia il PC e rimettilo in sospensione al termine'] = 'Wake the PC and put it back to sleep when done'
 $TrEn['Se all''ora prevista il PC è spento, a batteria o su una connessione a consumo, l''aggiornamento viene recuperato al primo accesso utile.'] = 'If the PC is off, on battery or on a metered connection at the scheduled time, the update runs at the next suitable sign-in.'
 $TrEn['Copia'] = 'Copy'
+$TrEn['Mostra password Wi-Fi'] = 'Show Wi-Fi passwords'
+$TrEn['Nascondi password Wi-Fi'] = 'Hide Wi-Fi passwords'
 $TrEn['Servizi'] = 'Services'
 $TrEn['Processi'] = 'Processes'
 $TrEn['File grandi'] = 'Large files'
@@ -4260,7 +4295,7 @@ foreach ($e in $list) {
     $rows.Add((New-Row @{ RawName = $e.DisplayName; Sub = [string]$e.Publisher; Key = $e.PSChildName; C1 = [string]$e.DisplayVersion; Checkable = ($e.NoRemove -ne 1)
         TagKind = $(if ($drvPkg) { 'warn' } else { 'none' })
         C2 = $(if ($e.EstimatedSize) { Format-Size ([double]$e.EstimatedSize * 1KB) } else { '' }); Tag = $tag
-        Data = @{ Msi = $msi; Quiet = [string]$e.QuietUninstallString; Cmd = [string]$e.UninstallString; Reg = [string]$e.PSPath; Name = [string]$e.DisplayName; Pub = [string]$e.Publisher; Loc = [string]$e.InstallLocation } }))
+        Data = @{ Msi = $msi; User = ([string]$e.PSPath -match '::HKEY_(CURRENT_USER|USERS)\\'); Quiet = [string]$e.QuietUninstallString; Cmd = [string]$e.UninstallString; Reg = [string]$e.PSPath; Name = [string]$e.DisplayName; Pub = [string]$e.Publisher; Loc = [string]$e.InstallLocation } }))
 }
 foreach ($a in Get-UserAppx | Where-Object { -not $_.IsFramework -and -not $_.NonRemovable -and $_.SignatureKind -eq 'Store' } | Sort-Object Name) {
     $nm = ($a.Name -replace '^[^\.]+\.', '') -replace '([a-z])([A-Z])', '$1 $2'
@@ -4281,14 +4316,15 @@ Invoke-Each $items {
     }
     if ($d.Msi) {
         $a = "/x $($it.Key)" + $(if ($silent) { ' /qn /norestart' } else { '' })
-        $code = Run-Wait 'msiexec.exe' $a $env:SystemRoot 'Normal'
+        $code = if ($d.User) { Invoke-AsUser "$env:SystemRoot\System32\msiexec.exe" $a $env:SystemRoot } else { Run-Wait 'msiexec.exe' $a $env:SystemRoot 'Normal' }
     } else {
         $cmd = [Environment]::ExpandEnvironmentVariables($(if ($silent -and $d.Quiet) { $d.Quiet } else { $d.Cmd }))
         $f, $a = Split-CommandLine $cmd
         if ($f -match 'msiexec') { $a = $a -replace '(?i)(^|\s)/I(?=\s*\{)', '$1/X'; if ($silent) { $a += ' /qn /norestart' } }
         $dir = $env:SystemRoot
         try { $dir = Split-Path $f -ErrorAction Stop } catch {}
-        $code = Run-Wait $f $a $dir 'Normal'
+        # i programmi installati dall'utente si disinstallano con i suoi permessi: il loro disinstallatore non va eseguito da amministratore
+        $code = if ($d.User) { $it.Status = 'Disinstallo con l''account dell''utente…'; Invoke-AsUser $f $a $dir } else { Run-Wait $f $a $dir 'Normal' }
         $it.Status = 'Attendo il disinstallatore…'
         Wait-Uninstallers $t0
     }
@@ -4618,7 +4654,8 @@ if ($lhm) { try { $lhm.Close() } catch {} }
 $LhmInstallCode = @'
 try {
     $sync.HwToast = 'Installo LibreHardwareMonitor…'
-    $r = Invoke-Winget 'install' 'LibreHardwareMonitor.LibreHardwareMonitor' 'winget'
+    $r = Invoke-Winget 'install' 'LibreHardwareMonitor.LibreHardwareMonitor' 'winget' $null -NoScope -Scoped
+    if ($r.Code -ne 0 -and -not (Find-LhmDll)) { $r = Invoke-Winget 'install' 'LibreHardwareMonitor.LibreHardwareMonitor' 'winget' }
     $s2 = Invoke-Hidden (Get-WingetPath) 'search PawnIO --accept-source-agreements --disable-interactivity'
     $hit = ConvertFrom-WingetTable $s2.Out | Where-Object { $_.Cols[1] -match 'PawnIO' } | Select-Object -First 1
     if ($hit) { $sync.HwToast = 'Installo il driver PawnIO…'; [void](Invoke-Winget 'install' $hit.Cols[1] '') }
@@ -4706,7 +4743,7 @@ try {
     $wp = @([regex]::Matches($pl, '(?m)^\s+[^:\r\n]*(?:Profile|Profilo)[^:\r\n]*:\s*(.+?)\s*$') | ForEach-Object { $_.Groups[1].Value } | Select-Object -First 30)
     foreach ($w in $wp) {
         $k = [regex]::Match((Invoke-Hidden "$env:SystemRoot\System32\netsh.exe" "wlan show profile name=`"$w`" key=clear" 15).Out, '(?m)^\s*(?:Key Content|Contenuto chiave)\s*:\s*(.+?)\s*$').Groups[1].Value
-        $rows.Add((New-Row @{ Name = "Wi-Fi salvata: $w"; Sub = 'Password della rete salvata su questo PC'; C1 = $(if ($k) { $k } else { 'senza password' }); Checkable = $false; Glyph = [string][char]0xE701 })) | Out-Null
+        $rows.Add((New-Row @{ Name = "Wi-Fi salvata: $w"; Sub = 'Password della rete salvata su questo PC'; C1 = $(if ($k) { '••••••••' } else { 'senza password' }); Data = $(if ($k) { @{ WifiKey = $k } } else { $null }); Checkable = $false; Glyph = [string][char]0xE701 })) | Out-Null
     }
 } catch {}
 $sync.Status = 'Misuro le risposte…'
@@ -5318,7 +5355,7 @@ $Modes = @{
             if ($op -eq 'repair' -and (Test-RemoteSession) -and [MtTr]::Msg('Sembra che tu stia lavorando da remoto (Desktop remoto, AnyDesk, TeamViewer o RustDesk): riparare la rete ti scollegherà dal PC. Procedere comunque?', 'MultiTool', 'YesNo', 'Warning') -ne 'Yes') { return $false }
             $true }
         Credits = @(@{ T = 'Test velocità: Cloudflare'; U = 'https://speed.cloudflare.com' }, @{ T = 'IP pubblico: ipify'; U = 'https://www.ipify.org' })
-        X1 = @{ Text = 'Ricontrolla'; Click = { Start-Scan } }
+        X1 = @{ Text = 'Mostra password Wi-Fi'; Click = { Switch-WifiKeys } }
         X2 = @{ Text = 'Dispositivi in rete'; Click = { Open-Mode 'lan' } }
         Empty = @{ Glyph = (G 0xE774); Title = 'Nessuna rete connessa'; Text = 'Collega un cavo o una rete Wi-Fi.' } }
 
@@ -5480,6 +5517,7 @@ function Start-Scan([hashtable]$Vars) {
     $Items.Clear(); Hide-Empty; Reset-Footer; Reset-Filter; $ui.LReport.Visibility = 'Collapsed'
     $ui.LAll.IsEnabled = $false; $ui.LNone.IsEnabled = $false
     $ui.LSummary.Text = ''; $ui.LSub.Text = $M.Sub
+    if ($M.X1) { $ui.LX1.Content = $M.X1.Text }
     $sync.Error = $null; $sync.ScanInfo = $null; $sync.Status = $M.Sub
     $sync.Token++; $sync.Phase = 'scan'
     $win.UpdateLayout(); Start-Shimmer
@@ -5650,6 +5688,13 @@ $sync.Phase = 'done'
     catch { Write-ErrLog "Avvio azione: $($_.Exception.Message)"; $sync.Extra = 'Errore: ' + $_.Exception.Message; $sync.Phase = 'done' }
 }
 
+function Switch-WifiKeys {
+    $w = @($Items | Where-Object { $_.Data -is [hashtable] -and $_.Data.WifiKey })
+    if (-not $w.Count) { Toast 'Nessuna password Wi-Fi salvata'; return }
+    $show = $w[0].C1 -eq '••••••••'
+    foreach ($it in $w) { $it.C1 = if ($show) { [string]$it.Data.WifiKey } else { '••••••••' } }
+    $ui.LX1.Content = T $(if ($show) { 'Nascondi password Wi-Fi' } else { 'Mostra password Wi-Fi' })
+}
 function Test-RemoteSession {
     [Windows.Forms.SystemInformation]::TerminalServerSession -or [bool](Get-Process AnyDesk, TeamViewer, rustdesk, RemotePCDesktop, Splashtop* -ErrorAction SilentlyContinue | Where-Object { $_.SessionId -eq (Get-Process -Id $PID).SessionId })
 }
