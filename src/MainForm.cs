@@ -238,7 +238,7 @@ public class MainForm : Form {
         return CanRetry(s) ? "Riprova" : "In arrivo";
     }
     // errore di rete o limite di GitHub: si può ricontrollare; release assente: no
-    static bool CanRetry(AppState s) { return s.Checked && !s.CanDownload && !s.Installed && s.Error != null && s.Error.IndexOf("Nessuna versione", StringComparison.Ordinal) < 0; }
+    static bool CanRetry(AppState s) { return s.Checked && !s.CanDownload && !s.Installed && s.Error != null && s.Error.IndexOf("Nessuna versione", StringComparison.Ordinal) < 0 && s.Error.IndexOf("non è ancora firmata", StringComparison.Ordinal) < 0; }
     bool ActionEnabled(AppState s) {
         if (s.Busy) return false;
         if (s.Installed && !s.UpdateAvailable) return true;
@@ -359,7 +359,7 @@ public class MainForm : Form {
                 Interlocked.Decrement(ref checking);
                 if (Interlocked.Decrement(ref left) == 0) {
                     int n = states.Count(x => x.UpdateAvailable);
-                    var failed = states.Where(x => x.Error != null && !x.Error.StartsWith("Nessuna versione")).ToList();
+                    var failed = states.Where(x => x.Error != null && !x.Error.StartsWith("Nessuna versione") && x.Error.IndexOf("non è ancora firmata", StringComparison.Ordinal) < 0).ToList();
                     if (states.All(x => !x.Online)) SetStatus("Nessuna connessione a GitHub", -1);
                     else if (n > 0) SetStatus(n == 1 ? "1 aggiornamento disponibile" : n + " aggiornamenti disponibili", -1);
                     else if (failed.Count > 0 && failed.Count == states.Count(x => x.Error != null) && states.All(x => x.Error != null)) SetStatus(failed[0].Error, -1);
@@ -444,7 +444,7 @@ public class MainForm : Form {
         if (s.UpdateAvailable) { dot = Th.Amber; return "Da aggiornare a " + s.LatestVersion; }
         if (s.Installed) { dot = Th.Green; return s.InstalledVersion != null ? "Installato · " + s.InstalledVersion : "Installato"; }
         if (s.CanDownload) { dot = Th.Faint; return "Non installato"; }
-        dot = Th.Faint; return !s.Checked ? "Controllo…" : CanRetry(s) ? "Controllo non riuscito" : "Non ancora pubblicato";
+        dot = Th.Faint; return !s.Checked ? "Controllo…" : CanRetry(s) ? "Controllo non riuscito" : s.Error != null && s.Error.IndexOf("firmata", StringComparison.Ordinal) >= 0 ? "In attesa di firma" : "Non ancora pubblicato";
     }
 
     // ---------- disegno: barra di stato ----------

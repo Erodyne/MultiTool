@@ -204,6 +204,10 @@ public static class Manager {
                     else if (n == asset.ToLowerInvariant() + ".sig") sig = a.Value;
                 }
             }
+            if (url != null && sig == null && !string.IsNullOrEmpty(Catalog.ReleaseKey)) {
+                url = null; // senza firma non si installa: inutile proporlo
+                err = "La versione " + ver + " non è ancora firmata: sarà installabile appena firmata";
+            }
             online = true;
         } catch (WebException e) {
             var hr = e.Response as HttpWebResponse;
