@@ -491,12 +491,12 @@ public class MainForm : Form {
             if (compact) {
                 // finestra stretta: schede orizzontali su due colonne
                 int cols = 2, rows = (states.Count + 1) / 2;
-                float w2 = (W - 2 * M - gap) / cols, h2 = Math.Max(112, Math.Min(150, (H - top - 28 - gap * (rows - 1)) / rows));
+                float w2 = (W - 2 * M - gap) / cols, h2 = Math.Max(140, Math.Min(150, (H - top - 28 - gap * (rows - 1)) / rows));
                 for (int i = 0; i < states.Count; i++) {
                     var r = new RectangleF(M + (i % cols) * (w2 + gap), top + (i / cols) * (h2 + gap), w2, h2);
                     cards.Add(r);
                     cardMore[i].Visible = false;
-                    cardMain[i].SetBounds((int)(r.Right - 20 - 132), (int)(r.Bottom - 20 - 38), 132, 38);
+                    cardMain[i].SetBounds((int)(r.X + 116), (int)(r.Bottom - 16 - 36), (int)Math.Min(160, r.Width - 136), 36);
                 }
                 return;
             }
@@ -602,7 +602,7 @@ public class MainForm : Form {
         using (var f = Th.F(13f, FontStyle.Bold)) Th.Text_(g, s.Def.Name, f, Th.Text, new RectangleF(x, c.Y + 16, w, 26));
         using (var f = Th.F(9f)) Th.Text_(g, s.Def.Tagline, f, Th.Dim, new RectangleF(x, c.Y + 42, w, 20));
         Color dot; string line = StatusLine(s, out dot);
-        float pw; Th.Pill(g, line, dot == Th.Faint ? Th.Dim : dot, new PointF(x, c.Bottom - 20 - 31), out pw, Math.Max(60, w - 132 - 12));
+        float pw; Th.Pill(g, line, dot == Th.Faint ? Th.Dim : dot, new PointF(x, c.Y + 70), out pw, w); // riga sua: non si taglia accanto al pulsante
     }
 
     void PaintApp(Graphics g, AppState s) {
