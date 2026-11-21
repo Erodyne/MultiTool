@@ -3309,7 +3309,7 @@ $xaml = @'
                     <TextBlock Text="SALUTE HARDWARE" Style="{StaticResource CardLabel}" VerticalAlignment="Center"/>
                     <Button x:Name="HHwMore" Style="{StaticResource LinkBtn}" Content="Dettagli  &#x2192;" HorizontalAlignment="Right" Padding="6,2" FontSize="12" Margin="0,-6,-6,-6"/>
                   </Grid>
-                  <Button x:Name="HDiskVital" DockPanel.Dock="Bottom" Style="{StaticResource GhostBtn}" Content="Salute dei dischi: apri DiskVital" Padding="14,8" FontSize="12" HorizontalAlignment="Left" Margin="0,10,0,0"/>
+                  <Button x:Name="HDiskVital" DockPanel.Dock="Bottom" Style="{StaticResource GhostBtn}" Content="Apri DiskVital" Padding="14,8" FontSize="12" HorizontalAlignment="Left" Margin="0,10,0,0"/>
                   <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel x:Name="HHealth"/>
                   </ScrollViewer>
@@ -3819,7 +3819,9 @@ $TrEn['Backup  ↗'] = 'Backup  ↗'
 $TrEn['Spazio disco  ↗'] = 'Disk space  ↗'
 $TrEn['Salute dei dischi  ↗'] = 'Disk health  ↗'
 $TrEn['ERODYNE SUITE'] = 'ERODYNE SUITE'
-$TrEn['Salute dei dischi: apri DiskVital'] = 'Disk health: open DiskVital'
+$TrEn['Apri DiskVital'] = 'Open DiskVital'
+$TrEn['Temperatura, usura e S.M.A.R.T.'] = 'Temperature, wear and S.M.A.R.T.'
+$TrEn['da installare'] = 'not installed'
 $TrEn['temperatura, usura e S.M.A.R.T. in DiskVital'] = 'temperature, wear and S.M.A.R.T. in DiskVital'
 $TrEn['SENSORI'] = 'SENSORS'
 $TrEn['Nascondi password Wi-Fi'] = 'Hide Wi-Fi passwords'
@@ -6668,7 +6670,8 @@ $timer.Add_Tick({
             $txt = "Carica $($i.Bat.Charge)%" + $(if ($null -ne $h) { "  ·  capacità $h% rispetto al nuovo" } else { '' })
             $ui.HHealth.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($HealthTpl -f (T 'Batteria'), (T $txt), $(if ($null -eq $h) { 'n.d.' } elseif ($h -ge 80) { 'Buona' } elseif ($h -ge 60) { 'Usurata' } else { 'Da sostituire' }), $col)))) | Out-Null
         }
-        if (-not $ui.HHealth.Children.Count) { $ui.HHealth.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($HealthTpl -f (T 'Dati non disponibili'), (T 'Il sistema non espone lo stato dei dischi'), '—', '#9AA0B8')))) | Out-Null }
+        $dv = [bool](Get-SuiteAppPath 'diskvital')
+        $ui.HHealth.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($HealthTpl -f (T 'Dischi'), (T 'Temperatura, usura e S.M.A.R.T.'), (T $(if ($dv) { 'DiskVital' } else { 'da installare' })), $(if ($dv) { '#34D399' } else { '#9AA0B8' }))))) | Out-Null
         $ui.HDisks.Children.Clear()
         foreach ($d in $i.Disks) {
             if (-not $d.Size) { continue }
