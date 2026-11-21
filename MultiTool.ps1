@@ -3,7 +3,7 @@
 #  MultiTool 2026 - Manutenzione PC
 # ============================================================
 
-$AppVersion = '2026.11.19.3'
+$AppVersion = '2026.11.21.1'
 $AppAuthor  = 'Erodyne'
 $AppRepo    = 'https://github.com/Erodyne/MultiTool'
 $TermsVersion = '1'
@@ -926,15 +926,11 @@ function Get-HwInventory {
 
     $sync.HwStatus = 'Dischi…'
     foreach ($d in Get-PhysicalDisk -ErrorAction SilentlyContinue | Sort-Object DeviceId) {
-        $rc = $d | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue
         $type = (@($(if ($d.MediaType -and "$($d.MediaType)" -ne 'Unspecified') { $d.MediaType }), $d.BusType) | Where-Object { $_ }) -join ' · '
-        $h = switch ("$($d.HealthStatus)") { 'Healthy' { 'Integro' } 'Warning' { 'Attenzione' } 'Unhealthy' { 'Guasto' } default { "$($d.HealthStatus)" } }
         Add-Card "Disco $($d.DeviceId)" 0xEDA2 @(
             (Row 'Modello' $d.FriendlyName); (Row 'Produttore' $d.Manufacturer); (Row 'Tipo' $type); (Row 'Capacità' (Gb $d.Size))
-            (Row 'Firmware' $d.FirmwareVersion); (Row 'Numero di serie' $d.SerialNumber); (Row 'Stato' $h)
-            (Row 'Temperatura' $(if ($rc.Temperature) { "$($rc.Temperature) °C (max $($rc.TemperatureMax) °C)" })); (Row 'Usura' $(if ($null -ne $rc.Wear) { "$($rc.Wear)%" }))
-            (Row 'Ore di accensione' $rc.PowerOnHours); (Row 'Cicli di accensione' $rc.StartStopCycleCount)
-            (Row 'Errori di lettura' $(if ($null -ne $rc.ReadErrorsUncorrected) { "$($rc.ReadErrorsUncorrected) non corretti" })))
+            (Row 'Firmware' $d.FirmwareVersion); (Row 'Numero di serie' $d.SerialNumber)
+            (Row 'Salute' 'temperatura, usura e S.M.A.R.T. in DiskVital'))
     }
 
     $sync.HwStatus = 'Monitor…'
@@ -1294,11 +1290,6 @@ function New-HealthReport {
     $id = Get-PcIdentity
     $ck = New-Object System.Collections.ArrayList
     $add = { param($a, $n, $v, $k) [void]$ck.Add(@{ A = $a; N = $n; V = $v; K = $k }) }
-    foreach ($d in Get-PhysicalDisk -ErrorAction SilentlyContinue) {
-        $rc = $d | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue
-        $k = if ("$($d.HealthStatus)" -ne 'Healthy') { 'err' } elseif ($rc.Wear -ge 80) { 'warn' } else { 'ok' }
-        & $add (Tr 'Dischi') $d.FriendlyName ((@("stato $($d.HealthStatus)", $(if ($null -ne $rc.Wear) { "usura $($rc.Wear)%" }), $(if ($rc.Temperature) { "$($rc.Temperature) °C" })) | Where-Object { $_ }) -join '  ·  ') $k
-    }
     foreach ($l in Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction SilentlyContinue) {
         if (-not $l.Size) { continue }
         $pct = [int]($l.FreeSpace / $l.Size * 100)
@@ -3196,10 +3187,7 @@ $xaml = @'
             <RadioButton x:Name="NavUpdates"   Style="{StaticResource Nav}" Tag="&#xE895;" Content="Aggiorna programmi"/>
             <RadioButton x:Name="NavInstall"   Style="{StaticResource Nav}" Tag="&#xE896;" Content="Installer locali"/>
             <RadioButton x:Name="NavCatalog"   Style="{StaticResource Nav}" Tag="&#xE721;" Content="Catalogo winget" Visibility="Collapsed"/>
-            <RadioButton x:Name="NavPacks"     Style="{StaticResource Nav}" Tag="&#xE7B8;" Content="Pacchetti consigliati"/>
-            <RadioButton x:Name="NavProfiles"  Style="{StaticResource Nav}" Tag="&#xE8F1;" Content="Profili"/>
             <RadioButton x:Name="NavUninstall" Style="{StaticResource Nav}" Tag="&#xE74D;" Content="Disinstalla"/>
-            <RadioButton x:Name="NavBackup"    Style="{StaticResource Nav}" Tag="&#xE753;" Content="Backup"/>
             <TextBlock Text="SISTEMA" Style="{StaticResource NavSection}"/>
             <RadioButton x:Name="NavHw"        Style="{StaticResource Nav}" Tag="&#xE7F8;" Content="Hardware"/>
             <RadioButton x:Name="NavWU"        Style="{StaticResource Nav}" Tag="&#xE777;" Content="Windows Update"/>
@@ -3208,8 +3196,6 @@ $xaml = @'
             <RadioButton x:Name="NavServices"  Style="{StaticResource Nav}" Tag="&#xE912;" Content="Servizi"/>
             <RadioButton x:Name="NavProcesses" Style="{StaticResource Nav}" Tag="&#xE9D9;" Content="Processi"/>
             <RadioButton x:Name="NavCleanup"   Style="{StaticResource Nav}" Tag="&#xE894;" Content="Pulizia disco"/>
-            <RadioButton x:Name="NavBigFiles"  Style="{StaticResource Nav}" Tag="&#xE8B7;" Content="File grandi"/>
-            <RadioButton x:Name="NavSpace"     Style="{StaticResource Nav}" Tag="&#xEDA2;" Content="Spazio disco"/>
             <RadioButton x:Name="NavRepair"    Style="{StaticResource Nav}" Tag="&#xE90F;" Content="Riparazione"/>
             <RadioButton x:Name="NavEvents"    Style="{StaticResource Nav}" Tag="&#xE7BA;" Content="Eventi di sistema"/>
             <RadioButton x:Name="NavPrivacy"   Style="{StaticResource Nav}" Tag="&#xE72E;" Content="Privacy"/>
@@ -3217,6 +3203,11 @@ $xaml = @'
             <RadioButton x:Name="NavNetwork"   Style="{StaticResource Nav}" Tag="&#xE774;" Content="Rete"/>
             <RadioButton x:Name="NavBench"     Style="{StaticResource Nav}" Tag="&#xE916;" Content="Benchmark"/>
             <RadioButton x:Name="NavRestore"   Style="{StaticResource Nav}" Tag="&#xE7A7;" Content="Punti di ripristino"/>
+            <TextBlock Text="ERODYNE SUITE" Style="{StaticResource NavSection}"/>
+            <RadioButton x:Name="NavAppInstalla" Style="{StaticResource Nav}" Tag="&#xE7B8;" Content="Installa programmi  ↗"/>
+            <RadioButton x:Name="NavAppBackup"   Style="{StaticResource Nav}" Tag="&#xE753;" Content="Backup  ↗"/>
+            <RadioButton x:Name="NavAppSpazio"   Style="{StaticResource Nav}" Tag="&#xEB05;" Content="Spazio disco  ↗"/>
+            <RadioButton x:Name="NavAppDisk"     Style="{StaticResource Nav}" Tag="&#xEDA2;" Content="Salute dei dischi  ↗"/>
             <TextBlock Text="ALTRO" Style="{StaticResource NavSection}"/>
             <RadioButton x:Name="NavHistory"   Style="{StaticResource Nav}" Tag="&#xE81C;" Content="Cronologia"/>
             <RadioButton x:Name="NavLogs"      Style="{StaticResource Nav}" Tag="&#xE8A5;" Content="Log"/>
@@ -3318,6 +3309,7 @@ $xaml = @'
                     <TextBlock Text="SALUTE HARDWARE" Style="{StaticResource CardLabel}" VerticalAlignment="Center"/>
                     <Button x:Name="HHwMore" Style="{StaticResource LinkBtn}" Content="Dettagli  &#x2192;" HorizontalAlignment="Right" Padding="6,2" FontSize="12" Margin="0,-6,-6,-6"/>
                   </Grid>
+                  <Button x:Name="HDiskVital" DockPanel.Dock="Bottom" Style="{StaticResource GhostBtn}" Content="Salute dei dischi: apri DiskVital" Padding="14,8" FontSize="12" HorizontalAlignment="Left" Margin="0,10,0,0"/>
                   <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel x:Name="HHealth"/>
                   </ScrollViewer>
@@ -3732,13 +3724,7 @@ $xaml = @'
                 </Border>
                 <Border Style="{StaticResource Card}">
                   <StackPanel>
-                    <TextBlock Text="BACKUP E SENSORI" Style="{StaticResource CardLabel}"/>
-                    <CheckBox x:Name="SetBkAuto" Style="{StaticResource Switch}" Margin="0,16,0,0" FontSize="14" Content="Backup automatico ogni giorno alle"/>
-                    <StackPanel Orientation="Horizontal" Margin="50,8,0,0">
-                      <TextBox x:Name="SetBkTime" Style="{StaticResource Input}" Width="80" FontSize="12"/>
-                      <Button x:Name="SetBkSave" Style="{StaticResource GhostBtn}" Content="Salva" Padding="14,6" FontSize="12" Margin="8,0,0,0"/>
-                    </StackPanel>
-                    <TextBlock x:Name="SetBkInfo" Foreground="#6B7290" FontSize="12" Margin="50,6,0,0" TextWrapping="Wrap"/>
+                    <TextBlock Text="SENSORI" Style="{StaticResource CardLabel}"/>
                     <CheckBox x:Name="SetSensLog" Style="{StaticResource Switch}" Margin="0,16,0,0" FontSize="14" Content="Registra temperature e ventole in background"/>
                     <TextBlock Text="Un valore ogni 30 secondi, consultabile da Hardware → Storico sensori." Foreground="#6B7290" FontSize="12" Margin="50,6,0,0" TextWrapping="Wrap"/>
                   </StackPanel>
@@ -3828,6 +3814,14 @@ $TrEn['Risveglia il PC e rimettilo in sospensione al termine'] = 'Wake the PC an
 $TrEn['Se all''ora prevista il PC è spento, a batteria o su una connessione a consumo, l''aggiornamento viene recuperato al primo accesso utile.'] = 'If the PC is off, on battery or on a metered connection at the scheduled time, the update runs at the next suitable sign-in.'
 $TrEn['Copia'] = 'Copy'
 $TrEn['Mostra password Wi-Fi'] = 'Show Wi-Fi passwords'
+$TrEn['Installa programmi  ↗'] = 'Install programs  ↗'
+$TrEn['Backup  ↗'] = 'Backup  ↗'
+$TrEn['Spazio disco  ↗'] = 'Disk space  ↗'
+$TrEn['Salute dei dischi  ↗'] = 'Disk health  ↗'
+$TrEn['ERODYNE SUITE'] = 'ERODYNE SUITE'
+$TrEn['Salute dei dischi: apri DiskVital'] = 'Disk health: open DiskVital'
+$TrEn['temperatura, usura e S.M.A.R.T. in DiskVital'] = 'temperature, wear and S.M.A.R.T. in DiskVital'
+$TrEn['SENSORI'] = 'SENSORS'
 $TrEn['Nascondi password Wi-Fi'] = 'Hide Wi-Fi passwords'
 $TrEn['Servizi'] = 'Services'
 $TrEn['Processi'] = 'Processes'
@@ -4251,20 +4245,7 @@ if (-not $rows.Count -and $r.Code -ne 0 -and ('0x{0:X8}' -f $r.Code) -ne '0x8A15
 $sync.ScanInfo = if ($rows.Count) { "$($rows.Count) risultati per `"$query`"." } else { $null }
 '@
 
-$ScanProfiles = @'
-foreach ($f in Get-ChildItem $ProfDir -Filter *.json -ErrorAction SilentlyContinue) {
-    try { $p = Get-Content $f.FullName -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop } catch {
-        $rows.Add((New-Row @{ Name = $f.BaseName; Sub = "File non valido: $($_.Exception.Message)"; Key = $f.FullName; Checkable = $false; Tag = 'errore'; TagKind = 'err' })) | Out-Null; continue
-    }
-    $wg = @(@($p.winget) | Where-Object { $_ }); $lc = @(@($p.local) | Where-Object { $_ })
-    $rows.Add((New-Row @{ Name = $(if ($p.name) { $p.name } else { $f.BaseName }); Sub = $(if ($p.description) { $p.description } else { $f.Name })
-        Key = $f.FullName; C1 = "$($wg.Count) pacchetti"; C2 = "$($lc.Count) file" }))
-}
-'@
 
-$ActProfiles = @'
-Invoke-Each $items { param($it) Install-Profile $it $it.Key $silent } 'Installo il profilo'
-'@
 
 $ScanImport = @'
 $j = Get-Content $file -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -4579,7 +4560,7 @@ if ($useLhm) {
         Add-Type -Path $dll -ErrorAction SilentlyContinue
         $c = New-Object LibreHardwareMonitor.Hardware.Computer
         $c.IsCpuEnabled = $true; $c.IsGpuEnabled = $true; $c.IsMotherboardEnabled = $true
-        $c.IsStorageEnabled = $true; $c.IsMemoryEnabled = $true; $c.IsControllerEnabled = $true
+        $c.IsStorageEnabled = $false; $c.IsMemoryEnabled = $true; $c.IsControllerEnabled = $true
         $c.Open()
         $lhm = $c
         $sync.SensSrc = 'LibreHardwareMonitor'
@@ -4614,10 +4595,6 @@ while ($sync.SensGen -eq $gen -and ($sync.SensOn -or $sync.SensLog)) {
             }
             foreach ($f in Get-CimInstance Win32_Fan -ErrorAction SilentlyContinue) {
                 if ($f.DesiredSpeed) { [void]$out.Add(@{ K = "fan$($f.DeviceID)"; N = 'Ventola'; G = $f.Name; T = 'Fan'; V = [double]$f.DesiredSpeed; U = 'RPM' }) }
-            }
-            foreach ($d in Get-PhysicalDisk -ErrorAction SilentlyContinue) {
-                $rc = $d | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue
-                if ($rc.Temperature) { [void]$out.Add(@{ K = "disk$($d.DeviceId)"; N = 'Disco'; G = $d.FriendlyName; T = 'Temperature'; V = [double]$rc.Temperature; U = '°C' }) }
             }
             $cpu = (Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average
             [void]$out.Add(@{ K = 'cpuload'; N = 'Carico CPU'; G = 'Processore'; T = 'Load'; V = [double]$cpu; U = '%' })
@@ -4698,33 +4675,7 @@ Invoke-Each $items {
 } 'Eseguo'
 '@
 
-$ScanBackup = @'
-$dest = (Get-Settings).BackupDest
-foreach ($f in Get-BackupFolders) {
-    if (-not $f.Path -or -not (Test-Path $f.Path)) { continue }
-    $sync.Status = "Calcolo: $($f.Name)…"
-    $sz = Get-BackupEntrySize $f
-    $rows.Add((New-Row @{ Name = $f.Name; Sub = $f.Path; Key = $f.Id; Data = $f.Path; C1 = (Format-Size $sz); Selected = $f.Def; Glyph = [string][char]0xE8B7 }))
-}
-$sync.ScanInfo = if ($dest) { "Destinazione: $dest\MultiTool-Backup\$env:COMPUTERNAME  ·  copia solo i file nuovi o modificati, non cancella nulla" } else { 'Scegli prima la destinazione (disco esterno o cartella di rete) con il pulsante in alto.' }
-'@
 
-$ActBackup = @'
-$dest = (Get-Settings).BackupDest
-if (-not $dest -or -not (Test-Path $dest)) { throw 'Destinazione del backup non disponibile: collega il disco o sceglila di nuovo' }
-$root = Join-Path $dest "MultiTool-Backup\$env:COMPUTERNAME"
-Invoke-Each $items {
-    param($it)
-    $f = Get-BackupFolders | Where-Object { $_.Id -eq $it.Key } | Select-Object -First 1
-    $r = Invoke-BackupEntry $f $root
-    $it.C2 = Format-Size (Get-DirSize @(Join-Path $root $f.Name))
-    if ($r.Suspect) { Set-It $it 'err' 'Sospeso: troppi file modificati insieme (possibile virus)' }
-    elseif ($r.Code -lt 8) { Set-It $it 'ok' $(if ($r.Copied -ge 0) { "$($r.Copied) file copiati" } else { 'Completato' }) } else { Set-It $it 'err' "Errore robocopy $($r.Code)" }
-} 'Copio'
-if (-not @($items | Where-Object { $_.StatusKind -eq 'err' }).Count) { $sync.LastBackup = (Get-Date).ToString('s') }
-$sync.BackupSel = @($items | ForEach-Object { $_.Key })
-$sync.Extra = "Backup in $root"
-'@
 
 $ScanNetwork = @'
 $sync.Status = 'Leggo le schede di rete…'
@@ -5011,37 +4962,7 @@ Invoke-Each $items {
 } 'Termino'
 '@
 
-$ScanBigFiles = @'
-$root = if ($all) { "$env:SystemDrive\" } else { (Get-UserCtx).Prof }
-$skip = "$env:SystemRoot".ToLower()
-$sync.Status = "Cerco i file più grandi in $root… (può richiedere qualche minuto)"
-$big = New-Object System.Collections.Generic.List[object]
-$n = 0; $script:n = 0
-$skipDirs = $skip, "$env:SystemDrive\`$recycle.bin", "$env:SystemDrive\system volume information", "$env:SystemDrive\recovery"
-$tops = @(Get-ChildItem $root -Force -ErrorAction SilentlyContinue | Where-Object { $skipDirs -notcontains $_.FullName.ToLower() })
-$gen = { foreach ($t in $tops) { if (-not $t.PSIsContainer) { $t } elseif (-not ($t.Attributes -band [IO.FileAttributes]::ReparsePoint)) { Get-ChildItem $t.FullName -Recurse -File -Force -ErrorAction SilentlyContinue } } }
-& $gen | ForEach-Object {
-    $script:n++; if ($script:n % 5000 -eq 0) { $sync.Status = "Analizzati $($script:n) file…"; if (Test-Abort) { throw 'Ricerca interrotta' } }
-    if ($_.Length -lt 100MB) { return }
-    if (([int64]$_.Attributes -band 0x441000) -or $_.Name -in 'pagefile.sys', 'hiberfil.sys', 'swapfile.sys') { return }
-    $big.Add($_)
-}
-$n = $script:n
-foreach ($f in $big | Sort-Object Length -Descending | Select-Object -First 100) {
-    $rows.Add((New-Row @{ RawName = $f.Name; Sub = $f.DirectoryName; Key = $f.FullName; C1 = (Format-Size $f.Length); C2 = $f.LastWriteTime.ToString('dd/MM/yyyy')
-        Tag = $(if ($f.LastWriteTime -lt (Get-Date).AddYears(-1)) { 'non modificato da 1 anno' } else { '' }); TagKind = 'warn' })) | Out-Null
-}
-$sync.ScanInfo = "$($rows.Count) file oltre 100 MB su $n analizzati in $root. Quelli eliminati vanno nel Cestino."
-'@
 
-$ActBigFiles = @'
-Add-Type -AssemblyName Microsoft.VisualBasic
-Invoke-Each $items {
-    param($it)
-    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($it.Key, 'OnlyErrorDialogs', 'SendToRecycleBin')
-    Set-It $it 'ok' 'Nel Cestino'
-} 'Sposto nel Cestino'
-'@
 
 $ScanEvents = @'
 $since = (Get-Date).AddDays(-7)
@@ -5080,31 +5001,6 @@ foreach ($g in $apps | Group-Object { $_.Properties[0].Value } | Sort-Object Cou
 $sync.ScanInfo = "Ultimi 7 giorni: $nErr errori di sistema  ·  $nBsod schermate blu  ·  $nPow spegnimenti anomali  ·  $nApp arresti di programmi"
 '@
 
-$ScanPacks = @'
-$sync.Status = 'Controllo i programmi già installati…'
-$wg = Get-WingetInstalled
-$names = @(Get-InstalledNames)
-$packs = @(
-    @('Browser', 'Google.Chrome', 'Google Chrome'), @('Browser', 'Mozilla.Firefox', 'Mozilla Firefox'), @('Browser', 'Brave.Brave', 'Brave')
-    @('Ufficio', 'TheDocumentFoundation.LibreOffice', 'LibreOffice'), @('Ufficio', 'Adobe.Acrobat.Reader.64-bit', 'Adobe Acrobat Reader', '^Adobe Acrobat( Reader| \(64-bit\)|$)'), @('Ufficio', 'SumatraPDF.SumatraPDF', 'SumatraPDF', '^SumatraPDF')
-    @('Ufficio', 'Notepad++.Notepad++', 'Notepad++', '^Notepad\+\+'), @('Multimedia', 'VideoLAN.VLC', 'VLC', '^VLC media player'), @('Multimedia', 'Spotify.Spotify', 'Spotify', '^Spotify|SpotifyAB\.SpotifyMusic')
-    @('Multimedia', 'IrfanSkiljan.IrfanView', 'IrfanView', '^IrfanView'), @('Multimedia', 'Audacity.Audacity', 'Audacity'), @('Multimedia', 'OBSProject.OBSStudio', 'OBS Studio', '^OBS Studio')
-    @('Comunicazione', 'Zoom.Zoom', 'Zoom', '^Zoom( Workplace|$| \()'), @('Comunicazione', 'Telegram.TelegramDesktop', 'Telegram', '^Telegram'), @('Comunicazione', 'Discord.Discord', 'Discord')
-    @('Utilità', '7zip.7zip', '7-Zip', '^7-Zip'), @('Utilità', 'Microsoft.PowerToys', 'PowerToys', '^PowerToys'), @('Utilità', 'Rufus.Rufus', 'Rufus')
-    @('Utilità', 'CrystalDewWorld.CrystalDiskInfo', 'CrystalDiskInfo', '^CrystalDiskInfo'), @('Utilità', 'CPUID.CPU-Z', 'CPU-Z', '^CPUID CPU-Z|^CPU-Z'), @('Utilità', 'REALiX.HWiNFO', 'HWiNFO', '^HWiNFO')
-    @('Sicurezza', 'Malwarebytes.Malwarebytes', 'Malwarebytes'), @('Sicurezza', 'KeePassXCTeam.KeePassXC', 'KeePassXC'), @('Sicurezza', 'Bitwarden.Bitwarden', 'Bitwarden', '^Bitwarden')
-    @('Assistenza remota', 'RustDesk.RustDesk', 'RustDesk'), @('Assistenza remota', 'AnyDesk.AnyDesk', 'AnyDesk'), @('Assistenza remota', 'TeamViewer.TeamViewer', 'TeamViewer', '^TeamViewer')
-    @('Componenti', 'Microsoft.VCRedist.2015+.x64', 'Visual C++ 2015-2022 (x64)', '^Microsoft Visual C\+\+ 20(15|17|19|22).*x64'), @('Componenti', 'Microsoft.DotNet.DesktopRuntime.8', '.NET Desktop Runtime 8', 'Windows Desktop Runtime - 8\.'), @('Componenti', 'Oracle.JavaRuntimeEnvironment', 'Java', '^Java( \d| SE|\(TM\))')
-    @('Giochi', 'Valve.Steam', 'Steam'), @('Giochi', 'EpicGames.EpicGamesLauncher', 'Epic Games Launcher', '^Epic Games Launcher')
-)
-foreach ($p in $packs) {
-    $pat = if ($p.Count -ge 4) { $p[3] } else { '^' + [regex]::Escape($p[2]) }
-    $inst = $wg.ContainsKey($p[1]) -or [bool]@($names | Where-Object { $_ -match $pat }).Count
-    $rows.Add((New-Row @{ Name = $p[2]; Sub = $p[1]; Key = $p[1]; C1 = $p[0]; Data = 'winget'; Tag = $(if ($inst) { 'installato' } else { '' }); TagKind = $(if ($inst) { 'ok' } else { 'none' })
-        Selected = $false; Glyph = [string][char]0xE7B8 })) | Out-Null
-}
-$sync.ScanInfo = 'Spunta i programmi da installare e premi INSTALLA: vengono scaricati dai siti ufficiali tramite winget.'
-'@
 
 $ScanLeftovers = @'
 foreach ($x in @(Read-Json 'leftovers.json' @()) | Where-Object { $_ }) {
@@ -5171,25 +5067,6 @@ foreach ($a in $found.Keys | Sort-Object { [int](($_ -split '\.')[3]) }) {
 $sync.ScanInfo = "$($rows.Count) dispositivi trovati in $base.0/24."
 '@
 
-$ScanSpace = @'
-$root = if ($path) { $path } else { "$env:SystemDrive\" }
-$sync.Status = "Calcolo lo spazio in $root…"
-$list = New-Object System.Collections.ArrayList
-foreach ($x in @(Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue)) {
-    if (Test-Abort) { return }
-    $sync.Status = "Calcolo: $($x.Name)…"
-    $sz = if ($x.PSIsContainer) { if ($x.Attributes -band [IO.FileAttributes]::ReparsePoint) { 0 } else { (Get-ChildItem -LiteralPath $x.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { -not ([int64]$_.Attributes -band 0x441000) } | Measure-Object Length -Sum).Sum } } else { $x.Length }
-    [void]$list.Add([pscustomobject]@{ I = $x; S = [double]$sz })
-}
-$tot = [double]($list | Measure-Object S -Sum).Sum
-foreach ($e in $list | Sort-Object S -Descending | Select-Object -First 60) {
-    $pct = if ($tot) { $e.S / $tot } else { 0 }
-    $bar = ([string][char]0x2588 * [int][math]::Round($pct * 14)).PadRight(14, [char]0x2591)
-    $rows.Add((New-Row @{ RawName = $e.I.Name; Sub = $e.I.FullName; Key = $e.I.FullName; Data = [bool]$e.I.PSIsContainer; C1 = (Format-Size $e.S); C2 = $bar
-        Tag = ('{0:N0}%' -f ($pct * 100)); Glyph = [string][char]$(if ($e.I.PSIsContainer) { 0xE8B7 } else { 0xE7C3 }) })) | Out-Null
-}
-$sync.ScanInfo = "$root  ·  $(Format-Size $tot) in totale. Seleziona una cartella e premi ENTRA."
-'@
 
 $InfoCode = @'
 $info = @{}
@@ -5219,12 +5096,6 @@ try {
 $tpav = @(Get-SecProducts 'AntiVirusProduct')
 if ($tpav.Count) { $info.DefOk = $true; $info.Def = 'Attiva'; $info.DefSig = [string]$tpav[0].displayName }
 $info.UpDays = Get-RealUptimeDays
-try {
-    $info.PD = @(Get-PhysicalDisk -ErrorAction Stop | ForEach-Object {
-        $rc = $_ | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue
-        @{ Name = [string]$_.FriendlyName; Media = [string]$_.MediaType; Bus = [string]$_.BusType; Health = [string]$_.HealthStatus; Size = [double]$_.Size
-           Temp = $rc.Temperature; Wear = $rc.Wear; Hours = $rc.PowerOnHours } })
-} catch { $info.PD = @() }
 try {
     $b = Get-CimInstance Win32_Battery -ErrorAction Stop | Select-Object -First 1
     if ($b) {
@@ -5276,12 +5147,6 @@ $Modes = @{
         X2 = @{ Text = 'Torna agli aggiornamenti'; Click = { Open-Mode 'updates' } }
         Empty = @{ Glyph = (G 0xE721); Title = 'Cerca un programma'; Text = 'Scrivi un nome, ad esempio "vlc", "firefox" o "7zip", e premi Invio.' } }
 
-    profiles = @{ Nav = 'NavProfiles'; Credits = @(@{ T = 'winget · Microsoft'; U = 'https://github.com/microsoft/winget-cli' });  Title = 'Profili'; Glyph = (G 0xE8F1); Silent = $true
-        Sub = 'Gruppi di programmi da installare in un colpo solo.'; H = 'WINGET', 'LOCALI', '', 'STATO'
-        Scan = $ScanProfiles; Action = $ActProfiles; Go = 'INSTALLA PROFILI'; Restore = $true
-        X1 = @{ Text = 'Apri cartella profili'; Click = { Start-Process explorer.exe $ProfDir } }
-        X2 = @{ Text = 'Ricarica'; Click = { Start-Scan } }
-        Empty = @{ Glyph = (G 0xE8F1); Title = 'Nessun profilo'; Text = 'Crea un file .json nella cartella Profili (vedi gli esempi inclusi).' } }
 
     import = @{ Nav = 'NavSettings'; Credits = @(@{ T = 'winget · Microsoft'; U = 'https://github.com/microsoft/winget-cli' });  Title = 'Importa elenco'; Glyph = (G 0xE896)
         Sub = 'Lettura del file…'; H = '', '', 'ORIGINE', 'STATO'
@@ -5340,11 +5205,6 @@ $Modes = @{
         X2 = @{ Text = 'Scheda intervento'; Click = { New-JobSheetUi } }
         Empty = @{ Glyph = ''; Title = ''; Text = '' } }
 
-    backup = @{ Nav = 'NavBackup'; Title = 'Backup'; Glyph = (G 0xE753)
-        Sub = 'Calcolo delle cartelle…'; H = 'DIMENSIONE', 'NEL BACKUP', '', 'ESITO'; Scan = $ScanBackup; Action = $ActBackup; Go = 'AVVIA BACKUP'
-        X1 = @{ Text = 'Scegli destinazione'; Click = { Select-BackupDest } }
-        X2 = @{ Text = 'Apri backup'; Click = { if ($Settings.BackupDest -and (Test-Path $Settings.BackupDest)) { Start-Process explorer.exe $Settings.BackupDest } else { Toast 'Destinazione non disponibile' } } }
-        Empty = @{ Glyph = (G 0xE753); Title = 'Nessuna cartella'; Text = '' } }
 
     network = @{ Nav = 'NavNetwork'; Title = 'Rete'; Glyph = (G 0xE774); Checks = $false; NoSelect = $true; AfterDone = 'review'
         Sub = 'Diagnosi della connessione…'; H = 'VALORE', 'VELOCITÀ', 'STATO', ''; Scan = $ScanNetwork; Action = $ActNetwork
@@ -5397,13 +5257,6 @@ $Modes = @{
         X2 = @{ Text = 'Aggiorna'; Click = { Start-Scan } }
         Empty = @{ Glyph = (G 0xE9D9); Title = ''; Text = '' } }
 
-    bigfiles = @{ Nav = 'NavBigFiles'; Title = 'File grandi'; Glyph = (G 0xE8B7); AfterDone = 'review'
-        Sub = 'Ricerca dei file più grandi…'; H = 'DIMENSIONE', 'MODIFICATO', '', 'ESITO'; Scan = $ScanBigFiles; Action = $ActBigFiles; Go = 'SPOSTA NEL CESTINO'
-        Confirm = 'Spostare {0} file nel Cestino? Potrai recuperarli finché non svuoti il Cestino.'
-        PreCheck = { param($op, $sel) if ((Get-UserCtx).Other) { [MtTr]::Msg("Stai usando l'account amministratore $env:USERNAME: i file finiranno nel suo Cestino, non in quello di $((Get-UserCtx).Name). Per recuperarli dovrai accedere con $env:USERNAME. Continuare?", 'MultiTool', 'YesNo', 'Warning') -eq 'Yes' } else { $true } }
-        X1 = @{ Text = 'Apri percorso'; Click = { $s = @($Items | Where-Object Selected | Select-Object -First 1); if ($s) { Start-Process explorer.exe "/select,`"$($s[0].Key)`"" } else { Toast 'Seleziona prima un file' } } }
-        X2 = @{ Text = 'Cerca in tutto il disco'; Click = { $State.Vars = @{ all = $true }; Start-Scan } }
-        Empty = @{ Glyph = (G 0xE8B7); Title = 'Nessun file oltre 100 MB'; Text = '' } }
 
     events = @{ Nav = 'NavEvents'; Title = 'Eventi di sistema'; Glyph = (G 0xE7BA); Checks = $false
         Sub = 'Lettura del registro eventi…'; H = 'QUANTE VOLTE', 'ULTIMA', 'TIPO', ''; Scan = $ScanEvents
@@ -5411,11 +5264,6 @@ $Modes = @{
         X2 = @{ Text = 'Affidabilità'; Click = { Start-Process perfmon.exe '/rel' } }
         Empty = @{ Glyph = (G 0xE73E); Title = 'Nessun errore negli ultimi 7 giorni'; Text = 'Windows non ha registrato errori critici, schermate blu o arresti anomali.' } }
 
-    packs = @{ Nav = 'NavPacks'; Online = $true; Title = 'Pacchetti consigliati'; Glyph = (G 0xE7B8); Credits = @(@{ T = 'winget · Microsoft'; U = 'https://github.com/microsoft/winget-cli' })
-        Sub = 'Controllo dei programmi installati…'; H = 'CATEGORIA', '', '', 'STATO'; Scan = $ScanPacks; Action = $ActWingetInstall; Go = 'INSTALLA'; Restore = $true
-        X1 = @{ Text = 'Crea profilo dai selezionati'; Click = { New-ProfileFromSelection } }
-        X2 = @{ Text = 'Ricarica'; Click = { Start-Scan } }
-        Empty = @{ Glyph = (G 0xE7B8); Title = ''; Text = '' } }
 
     leftovers = @{ Nav = 'NavUninstall'; Title = 'Residui delle disinstallazioni'; Glyph = (G 0xE74D); AfterDone = 'rescan'
         Sub = 'Lettura dei residui…'; H = 'TIPO', 'DIMENSIONE', '', 'ESITO'; Scan = $ScanLeftovers; Action = $ActLeftovers; Go = 'ELIMINA'
@@ -5430,11 +5278,6 @@ $Modes = @{
         X2 = @{ Text = 'Ricerca di nuovo'; Click = { Start-Scan } }
         Empty = @{ Glyph = (G 0xE839); Title = 'Nessun dispositivo trovato'; Text = '' } }
 
-    space = @{ Nav = 'NavSpace'; Title = 'Spazio disco'; Glyph = (G 0xEDA2); AfterDone = 'review'
-        Sub = 'Calcolo dello spazio occupato…'; H = 'DIMENSIONE', 'PROPORZIONE', '%', ''; Scan = $ScanSpace
-        X1 = @{ Text = 'Entra'; Click = { $s = @($Items | Where-Object { $_.Selected -and $_.Data -eq $true } | Select-Object -First 1); if ($s) { Open-Mode 'space' @{ path = $s[0].Key } } else { Toast 'Seleziona prima una cartella' } } }
-        X2 = @{ Text = 'Livello superiore'; Click = { $cur = if ($State.Vars -and $State.Vars.path) { $State.Vars.path } else { "$env:SystemDrive\" }; $par = Split-Path $cur -Parent; if ($par) { Open-Mode 'space' @{ path = $par } } else { Toast 'Sei già nella cartella principale del disco' } } }
-        Empty = @{ Glyph = (G 0xEDA2); Title = 'Cartella vuota'; Text = '' } }
 
     exclusions = @{ Nav = 'NavSettings'; Title = 'Esclusioni'; Glyph = (G 0xE72E); AfterDone = 'rescan'
         Sub = 'Programmi che non verranno mai aggiornati.'; H = '', '', '', 'STATO'
@@ -5531,7 +5374,7 @@ function Start-Scan([hashtable]$Vars) {
 
 # --- Preparazione delle sezioni in background ---
 $sync.Cache = [hashtable]::Synchronized(@{})
-$PrefetchOrder = 'full', 'deliver', 'updates', 'installers', 'profiles', 'uninstall', 'backup', 'hw', 'wu', 'drivers',
+$PrefetchOrder = 'full', 'deliver', 'updates', 'installers', 'uninstall', 'hw', 'wu', 'drivers',
                  'startup', 'services', 'cleanup', 'repair', 'privacy', 'security', 'network', 'events', 'bench', 'restore', 'history'
 $PrefetchCode = @'
 $realSync = $sync
@@ -5570,11 +5413,11 @@ function Start-Prefetch {
     Start-Bg $PrefetchCode @{ list = $PrefetchOrder; codes = $codes; pgen = $sync.PrefetchGen }
 }
 $CacheDeps = @{
-    updates = 'updates', 'uninstall'; catalog = 'updates', 'uninstall'; import = 'updates', 'uninstall'; profiles = 'updates', 'uninstall'
-    installers = 'updates', 'uninstall'; packs = 'updates', 'uninstall'; uninstall = 'uninstall', 'updates', 'startup', 'services'
+    updates = 'updates', 'uninstall'; catalog = 'updates', 'uninstall'; import = 'updates', 'uninstall'
+    installers = 'updates', 'uninstall'; uninstall = 'uninstall', 'updates', 'startup', 'services'
     wu = 'wu', 'security', 'restore'; cleanup = 'cleanup', 'restore'; full = 'updates', 'uninstall', 'wu', 'cleanup', 'drivers', 'security', 'restore'
     deliver = 'updates', 'uninstall', 'wu', 'cleanup', 'drivers', 'privacy', 'security', 'restore'; privacy = 'privacy', 'uninstall'
-    security = 'security'; startup = 'startup'; services = 'services'; backup = 'backup'; restore = 'restore'; bench = 'bench'; repair = 'repair'
+    security = 'security'; startup = 'startup'; services = 'services'; restore = 'restore'; bench = 'bench'; repair = 'repair'
 }
 function Invalidate-Cache([string]$Mode) {
     $list = if ($Mode -and $CacheDeps[$Mode]) { @($CacheDeps[$Mode]) } elseif ($Mode) { @($Mode) } else { [Threading.Monitor]::Enter($sync.Cache.SyncRoot); try { @($sync.Cache.Keys) } finally { [Threading.Monitor]::Exit($sync.Cache.SyncRoot) } }
@@ -5645,7 +5488,7 @@ function Start-Action([string]$op) {
     if ($op -ne 'web' -and $M.GoFilter) { $sel = @($sel | Where-Object $M.GoFilter) }
     if (-not $noSel -and -not $sel.Count) { Toast $(if ($M.GoFilterMsg) { $M.GoFilterMsg } else { 'Seleziona almeno un elemento' }); return }
     if ($sync.Phase -eq 'run') { return }
-    if ($State.Mode -in 'updates', 'wu', 'installers', 'catalog', 'profiles', 'import', 'full', 'deliver', 'packs' -and $op -ne 'skipver') {
+    if ($State.Mode -in 'updates', 'wu', 'installers', 'catalog', 'import', 'full', 'deliver' -and $op -ne 'skipver') {
         $free = (Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
         if ($null -ne $free -and $free -lt 5GB -and [MtTr]::Msg("Sul disco $env:SystemDrive restano solo $(Format-Size $free) liberi: aggiornamenti e installazioni potrebbero non riuscire. Conviene prima fare una Pulizia disco.`n`nContinuare comunque?", 'MultiTool', 'YesNo', 'Warning') -ne 'Yes') { return }
     }
@@ -5798,7 +5641,7 @@ th,td{padding:9px 14px;text-align:left;border-bottom:1px solid #eceef4;font-size
 }
 
 # --- Backup / ripristino ---
-function Select-BackupDest {
+function Select-BackupDest-Legacy {
     $d = New-Object System.Windows.Forms.FolderBrowserDialog
     $d.Description = 'Scegli dove salvare il backup (disco esterno, chiavetta o cartella di rete)'
     if ($Settings.BackupDest -and (Test-Path $Settings.BackupDest)) { $d.SelectedPath = $Settings.BackupDest }
@@ -5813,23 +5656,15 @@ function Select-BackupDest {
 }
 $BkTaskName = 'MultiTool - Backup automatico'
 function Update-BackupTask {
-    try {
-        if ($Settings.BackupAuto -and $Settings.BackupDest) {
-            $vbs = Join-Path $DataDir 'backup.vbs'
-            Write-TaskVbs $vbs @('Set sh = CreateObject("WScript.Shell")', ('sh.Run """' + $PsExe + '"" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""' + $ScriptPath + '"" -Backup", 0, True'))
-            $act = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbs`""
-            $trg = New-ScheduledTaskTrigger -Daily -At ([datetime]::ParseExact($Settings.BackupTime, 'H:mm', $null))
-            $pr  = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Highest
-            $st  = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 4)
-            Register-ScheduledTask -TaskName $BkTaskName -Action $act -Trigger $trg -Principal $pr -Settings $st -Force | Out-Null
-        } else { Unregister-ScheduledTask -TaskName $BkTaskName -Confirm:$false -ErrorAction SilentlyContinue }
-    } catch { Toast "Pianificazione backup non riuscita: $($_.Exception.Message)" }
-    Update-BackupInfo
+    # il backup è passato a Erodyne Backup: quando la sua attività esiste, tolgo quella vecchia di MultiTool
+    if (-not $Settings.BackupAuto) { Unregister-ScheduledTask -TaskName $BkTaskName -Confirm:$false -ErrorAction SilentlyContinue; return }
+    if (@(Get-ScheduledTask -TaskName 'Erodyne Backup - *' -ErrorAction SilentlyContinue).Count) {
+        Unregister-ScheduledTask -TaskName $BkTaskName -Confirm:$false -ErrorAction SilentlyContinue
+        $Settings.BackupAuto = $false; Save-Settings
+        Write-ErrLog 'Backup automatico passato a Erodyne Backup: attività di MultiTool rimossa'
+    }
 }
-function Update-BackupInfo {
-    $last = if ($Settings.LastBackup) { ([datetime]$Settings.LastBackup).ToString('dd/MM/yyyy HH:mm') } else { 'mai' }
-    $ui.SetBkInfo.Text = "Destinazione: $(if ($Settings.BackupDest) { $Settings.BackupDest } else { 'non scelta (vai in Backup)' })  ·  ultimo backup: $last"
-}
+function Update-BackupInfo { }
 function Remove-OldestRestore {
     if ([MtTr]::Msg('Eliminare il punto di ripristino più vecchio?', 'MultiTool', 'YesNo', 'Question') -ne 'Yes') { return }
     Start-Bg '$r = Invoke-Hidden "$env:SystemRoot\System32\vssadmin.exe" "delete shadows /for=$env:SystemDrive /oldest /quiet"; $sync.Toast = $(if ($r.Code -eq 0) { "Punto di ripristino eliminato" } else { "Eliminazione non riuscita (codice $($r.Code))" })' @{}
@@ -5960,7 +5795,6 @@ function New-ProfileFromSelection {
     if ((Test-Path $f) -and [MtTr]::Msg("Esiste già un profilo $bn. Sostituirlo?", 'MultiTool', 'YesNo', 'Question') -ne 'Yes') { return }
     $o = [ordered]@{ name = $n.Trim(); description = "$($sel.Count) programmi  ·  creato il $(Get-Date -Format 'dd/MM/yyyy')"; winget = @($sel | ForEach-Object { $_.Key }); local = @() }
     ConvertTo-Json $o -Depth 4 | Set-Content $f -Encoding UTF8
-    Invalidate-Cache 'profiles'
     Toast "Profilo creato: $(Split-Path $f -Leaf)"
 }
 function New-JobSheetUi { Toast 'Preparo la scheda intervento…'; Start-Bg '$f = New-JobSheet; Open-Shell $f' @{} }
@@ -5975,6 +5809,40 @@ function Start-Stress {
         Start-Bg '$end = [DateTime]::UtcNow.AddMinutes(5); while ($sync.Stress -and [DateTime]::UtcNow -lt $end) { $x = 0.0; for ($j = 1; $j -lt 300000; $j++) { $x += [math]::Sqrt($j) } }' @{}
     }
     $ui.HwStress.Content = T 'Interrompi stress test'
+}
+
+# --- Programmi della Erodyne Suite ---
+$SuiteApps = @{
+    installa  = @{ N = 'Erodyne Installa'; Exe = 'ErodyneInstalla.exe'; Dir = 'ErodyneInstalla'; User = $false; Repo = 'Erodyne/Installa' }
+    backup    = @{ N = 'Erodyne Backup'; Exe = 'ErodyneBackup.exe'; Dir = 'ErodyneBackup'; User = $true; Repo = 'Erodyne/Backup' }
+    spazio    = @{ N = 'Erodyne Spazio'; Exe = 'ErodyneSpazio.exe'; Dir = 'ErodyneSpazio'; User = $true; Repo = 'Erodyne/Spazio' }
+    diskvital = @{ N = 'DiskVital'; Exe = 'DiskVital.exe'; Dir = 'DiskVital'; User = $false; Repo = 'Erodyne/Diskvital' }
+}
+function Get-SuiteAppPath([string]$Id) {
+    $a = $SuiteApps[$Id]; if (-not $a) { return $null }
+    $dirs = if ($a.User) { @((Get-UserCtx).Local, $env:LOCALAPPDATA) | Select-Object -Unique | ForEach-Object { Join-Path $_ "Programs\$($a.Dir)" } }
+            else { @(Join-Path ([Environment]::GetFolderPath('ProgramFiles')) $a.Dir) }
+    foreach ($d in $dirs) { $f = Join-Path $d $a.Exe; if (Test-Path -LiteralPath $f) { return $f } }
+    $null
+}
+function Start-AsDesktopUser([string]$File) {
+    # i programmi installati per utente stanno in una cartella che l'utente può modificare: non li avvio da amministratore,
+    # li faccio aprire a Esplora risorse, che li avvia con i permessi normali dell'utente collegato
+    Start-Process "$env:SystemRoot\explorer.exe" "`"$File`""
+}
+function Open-SuiteApp([string]$Id) {
+    $a = $SuiteApps[$Id]
+    $f = Get-SuiteAppPath $Id
+    if ($f) {
+        try { if ($a.User) { Start-AsDesktopUser $f } else { Start-Process $f }; Toast "Apro $($a.N)…" } catch { Toast "Non riesco ad aprire $($a.N): $($_.Exception.Message)" }
+        return
+    }
+    $suite = @((Get-UserCtx).Local, $env:LOCALAPPDATA) | Select-Object -Unique | ForEach-Object { Join-Path $_ 'Programs\ErodyneSuite\ErodyneSuite.exe' } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if ($suite) {
+        if ([MtTr]::Msg("$($a.N) non è installato su questo PC.`n`nApro la Erodyne Suite per installarlo?", 'MultiTool', 'YesNo', 'Question') -eq 'Yes') { Start-AsDesktopUser $suite }
+    } elseif ([MtTr]::Msg("$($a.N) non è installato su questo PC.`n`nSi installa dalla Erodyne Suite. Apro la pagina per scaricarlo?", 'MultiTool', 'YesNo', 'Question') -eq 'Yes') {
+        Open-Shell "https://github.com/$($a.Repo)/releases/latest"
+    }
 }
 
 # --- Ricerca rapida (Ctrl+K) ---
@@ -6138,17 +6006,19 @@ function Update-LastOps {
         }
     }
     if ($Settings.LastBackup) { try { $last['bk'] = [datetime]$Settings.LastBackup } catch {} }
+    try {
+        $eb = Join-Path (Get-UserCtx).Roam 'ErodyneBackup\impostazioni.txt'
+        if (Test-Path -LiteralPath $eb) {
+            $v = (Get-Content -LiteralPath $eb -Encoding UTF8 | Where-Object { $_ -match '^ultimo=' } | Select-Object -First 1) -replace '^ultimo=', ''
+            if ($v) { $t = [datetime]$v; if (-not $last['bk'] -or $t -gt $last['bk']) { $last['bk'] = $t } }
+        }
+    } catch {}
     $State.LastOps = $last
     $f = { param($k, $t) "$t " + $(if ($last[$k]) { $last[$k].ToString('dd/MM HH:mm') } else { 'mai' }) }
     $ui.HLast.Text = ((& $f 'full' 'Manutenzione:'), (& $f 'upd' 'Programmi aggiornati:'), (& $f 'wu' 'Windows Update:'), (& $f 'clean' 'Pulizia:'), (& $f 'bk' 'Backup:')) -join '   ·   '
 }
 function Test-HealthAlarms($i) {
     $al = @()
-    foreach ($d in @($i.PD)) {
-        if ($d.Health -and $d.Health -ne 'Healthy') { $al += "Disco $($d.Name): stato $($d.Health)" }
-        if ($null -ne $d.Wear -and $d.Wear -ge 80) { $al += "Disco $($d.Name): usura $($d.Wear)%" }
-        if ($d.Temp -ge $(if ($d.Bus -eq 'NVMe') { 72 } elseif ($d.Media -eq 'SSD') { 65 } else { 55 })) { $al += "Disco $($d.Name): $($d.Temp) °C" }
-    }
     foreach ($d in @($i.Disks)) { if ($d.Size -and $d.Free / $d.Size -lt 0.1) { $al += "Disco $($d.Name): solo $(Format-Size $d.Free) liberi" } }
     if ($i.Bat -and $null -ne $i.Bat.Health -and $i.Bat.Health -lt 50) { $al += "Batteria: capacità al $($i.Bat.Health)%" }
     if ($i.DefOk -eq $false) { $al += 'Antivirus Microsoft Defender disattivato' }
@@ -6343,19 +6213,31 @@ try {
 # ============================================================
 #  Eventi
 # ============================================================
-$navMap = @{ NavUpdates = 'updates'; NavInstall = 'installers'; NavCatalog = 'catalog'; NavProfiles = 'profiles'; NavUninstall = 'uninstall'
+$navMap = @{ NavUpdates = 'updates'; NavInstall = 'installers'; NavCatalog = 'catalog'; NavUninstall = 'uninstall'
              NavWU = 'wu'; NavDrivers = 'drivers'; NavStartup = 'startup'; NavCleanup = 'cleanup'; NavRepair = 'repair'; NavHistory = 'history'
-             NavFull = 'full'; NavPrivacy = 'privacy'; NavDeliver = 'deliver'; NavBackup = 'backup'; NavNetwork = 'network'
+             NavFull = 'full'; NavPrivacy = 'privacy'; NavDeliver = 'deliver'; NavNetwork = 'network'
              NavSecurity = 'security'; NavBench = 'bench'; NavRestore = 'restore'; NavServices = 'services'; NavProcesses = 'processes'
-             NavBigFiles = 'bigfiles'; NavEvents = 'events'; NavPacks = 'packs'; NavSpace = 'space' }
+             NavEvents = 'events' }
 foreach ($n in $navMap.Keys) {
     $ui[$n].Add_Click({ param($s, $e) Open-Mode $navMap[$s.Name] })
+}
+# programmi della Erodyne Suite: si aprono a parte, la voce selezionata resta quella di prima
+$appNav = @{ NavAppInstalla = 'installa'; NavAppBackup = 'backup'; NavAppSpazio = 'spazio'; NavAppDisk = 'diskvital' }
+foreach ($n in $appNav.Keys) {
+    $ui[$n].Add_Click({
+        param($s, $e)
+        $s.IsChecked = $false
+        $prev = if ($ui.ViewList.Visibility -eq 'Visible' -and $Modes[$State.Mode]) { $Modes[$State.Mode].Nav } elseif ($ui.ViewSettings.Visibility -eq 'Visible') { 'NavSettings' } elseif ($ui.ViewHw.Visibility -eq 'Visible') { 'NavHw' } else { 'NavHome' }
+        if ($prev -and $ui[$prev]) { $ui[$prev].IsChecked = $true }
+        Open-SuiteApp $appNav[$s.Name]
+    })
 }
 $ui.NavHome.Add_Click({ Go-Home })
 $ui.NavSettings.Add_Click({ Stop-AnyScan; Show-View 'ViewSettings' })
 $ui.NavLogs.Add_Click({ Stop-AnyScan; Show-View 'ViewLogs'; Load-Logs })
 $ui.NavHw.Add_Click({ Open-Hw })
 $ui.HHwMore.Add_Click({ Open-Hw })
+$ui.HDiskVital.Add_Click({ Open-SuiteApp 'diskvital' })
 $ui.HwReload.Add_Click({ Load-Hw; Start-Sensors })
 $ui.HwExport.Add_Click({ Export-Hw })
 $ui.HwHist.Add_Click({ Export-SensorHistory })
@@ -6561,16 +6443,6 @@ $ui.SetLogo.Add_Click({
         $dst = Join-Path $DataDir ('logo' + [IO.Path]::GetExtension($d.FileName)); Copy-Item $d.FileName $dst -Force
         $Settings.ShopLogo = $dst; Save-Settings; $ui.SetLogoInfo.Text = Split-Path $d.FileName -Leaf
     }
-})
-$ui.SetBkAuto.IsChecked = [bool]$Settings.BackupAuto
-$ui.SetBkTime.Text = $Settings.BackupTime
-$ui.SetBkSave.Add_Click({
-    $t = $ui.SetBkTime.Text.Trim()
-    if ($t -notmatch '^([01]?\d|2[0-3]):[0-5]\d$') { Toast 'Orario non valido: usa il formato HH:MM'; return }
-    if ($ui.SetBkAuto.IsChecked -and -not $Settings.BackupAuto -and -not (Confirm-PortableTasks)) { $ui.SetBkAuto.IsChecked = $false; return }
-    if ($ui.SetBkAuto.IsChecked -and -not $Settings.BackupDest) { Toast 'Scegli prima la destinazione nella sezione Backup'; $ui.SetBkAuto.IsChecked = $false; return }
-    $Settings.BackupAuto = [bool]$ui.SetBkAuto.IsChecked; $Settings.BackupTime = $t; Save-Settings
-    Update-BackupTask; if ($Settings.BackupAuto) { Show-TaskAccountNote }; Toast $(if ($Settings.BackupAuto) { "Backup automatico ogni giorno alle $t" } else { 'Backup automatico disattivato' })
 })
 $ui.SetSensLog.IsChecked = [bool]$Settings.SensLog
 $ui.SetSensLog.Add_Click({
@@ -6790,14 +6662,6 @@ $timer.Add_Tick({
         Update-LastOps
         try { Test-HealthAlarms $i } catch { Write-ErrLog "Allarmi: $($_.Exception.Message)" }
         $ui.HHealth.Children.Clear()
-        foreach ($d in @($i.PD)) {
-            $ok = $d.Health -eq 'Healthy'
-            $st = switch ($d.Health) { 'Healthy' { 'Integro' } 'Warning' { 'Attenzione' } 'Unhealthy' { 'Guasto' } default { 'Sconosciuto' } }
-            $det = @($(if ($d.Media -and $d.Media -ne 'Unspecified') { $d.Media }), $(if ($d.Size) { Format-Size $d.Size }),
-                     $(if ($d.Temp) { "$($d.Temp) °C" }), $(if ($null -ne $d.Wear) { "usura $($d.Wear)%" }), $(if ($d.Hours) { "$($d.Hours) ore" })) | Where-Object { $_ }
-            $col = if ($ok) { '#34D399' } elseif ($d.Health -eq 'Warning') { '#FBBF24' } else { '#F87171' }
-            $ui.HHealth.Children.Add([Windows.Markup.XamlReader]::Parse((Apply-Theme ($HealthTpl -f [Security.SecurityElement]::Escape($d.Name), [Security.SecurityElement]::Escape((T ($det -join '  ·  '))), (T $st), $col)))) | Out-Null
-        }
         if ($i.Bat) {
             $h = $i.Bat.Health
             $col = if ($null -eq $h) { '#9AA0B8' } elseif ($h -ge 80) { '#34D399' } elseif ($h -ge 60) { '#FBBF24' } else { '#F87171' }
@@ -7055,9 +6919,10 @@ try {
     Get-ChildItem (Join-Path $DataDir 'DriverBackup') -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending |
         Select-Object -Skip 3 | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 } catch {}
-if ($Settings.BackupDest -and (-not $Settings.LastBackup -or ((Get-Date) - [datetime]$Settings.LastBackup).TotalDays -gt 7)) {
+try { Update-BackupTask } catch { Write-ErrLog "Backup: $($_.Exception.Message)" }
+if ($Settings.BackupAuto -and -not (Get-SuiteAppPath 'backup')) {
     if ([string]$Settings.LastBkNag -ne (Get-Date).ToString('yyyyMMdd')) {
-        Toast "L'ultimo backup ha più di 7 giorni: vai nella sezione Backup"
+        Toast "Il backup ora è in Erodyne Backup: installalo dalla Erodyne Suite (fino ad allora il backup automatico continua come prima)"
         $Settings | Add-Member -NotePropertyName LastBkNag -NotePropertyValue (Get-Date).ToString('yyyyMMdd') -Force; Save-Settings
     }
 }
@@ -7144,14 +7009,13 @@ if ($SelfTest) {
         @{ N = 'hardware'; K = 'hw'; T = 180 }
         @{ N = 'full'; K = 'mode'; M = 'full' }, @{ N = 'deliver'; K = 'mode'; M = 'deliver' }, @{ N = 'updates'; K = 'mode'; M = 'updates'; T = 400; Expect = { -not $env:MT_WINGET -or @($Items | Where-Object { $_.Key -eq '7zip.7zip' }).Count } }
         @{ N = 'installers'; K = 'mode'; M = 'installers' }, @{ N = 'catalog'; K = 'mode'; M = 'catalog'; V = @{ query = 'vlc' }; T = 300 }
-        @{ N = 'packs'; K = 'mode'; M = 'packs'; T = 300; Expect = { -not $env:MT_WINGET -or @($Items | Where-Object { $_.Key -eq '7zip.7zip' -and $_.Tag -eq 'installato' }).Count } }
         @{ N = 'ricerca-in-aggiorna'; K = 'search'; Q = 'vlc'; T = 300 }
         @{ N = 'azione-installa-da-ricerca'; K = 'act'; M = 'catalog'; V = @{ query = 'vlc' }; Op = 'go'; Pick = 'VideoLAN.VLC'; T = 900 }
         @{ N = 'azione-aggiorna-7zip'; K = 'act'; M = 'updates'; Op = 'go'; Pick = '7zip.7zip'; T = 900 }
-        @{ N = 'packs-dopo-installazione'; K = 'mode'; M = 'packs'; T = 300; Expect = { -not $env:MT_WINGET -or @($Items | Where-Object { $_.Key -eq 'VideoLAN.VLC' -and $_.Tag -eq 'installato' }).Count } }, @{ N = 'profiles'; K = 'mode'; M = 'profiles' }, @{ N = 'uninstall'; K = 'mode'; M = 'uninstall' }
-        @{ N = 'backup'; K = 'mode'; M = 'backup' }, @{ N = 'wu'; K = 'mode'; M = 'wu'; T = 600 }, @{ N = 'drivers'; K = 'mode'; M = 'drivers' }
+        @{ N = 'uninstall'; K = 'mode'; M = 'uninstall' }
+        @{ N = 'wu'; K = 'mode'; M = 'wu'; T = 600 }, @{ N = 'drivers'; K = 'mode'; M = 'drivers' }
         @{ N = 'startup'; K = 'mode'; M = 'startup' }, @{ N = 'services'; K = 'mode'; M = 'services' }, @{ N = 'processes'; K = 'mode'; M = 'processes' }
-        @{ N = 'cleanup'; K = 'mode'; M = 'cleanup' }, @{ N = 'bigfiles'; K = 'mode'; M = 'bigfiles'; T = 600 }, @{ N = 'space'; K = 'mode'; M = 'space'; V = @{ path = "$env:SystemRoot\Temp" } }
+        @{ N = 'cleanup'; K = 'mode'; M = 'cleanup' }
         @{ N = 'repair'; K = 'mode'; M = 'repair' }, @{ N = 'events'; K = 'mode'; M = 'events' }, @{ N = 'privacy'; K = 'mode'; M = 'privacy' }
         @{ N = 'security'; K = 'mode'; M = 'security' }, @{ N = 'network'; K = 'mode'; M = 'network' }, @{ N = 'lan'; K = 'mode'; M = 'lan' }
         @{ N = 'bench'; K = 'mode'; M = 'bench' }, @{ N = 'restore'; K = 'mode'; M = 'restore' }, @{ N = 'history'; K = 'mode'; M = 'history' }, @{ N = 'leftovers'; K = 'mode'; M = 'leftovers'; Expect = { -not @($Items | Where-Object { $_.Key -in 'C:\Users', 'HKLM:\SOFTWARE\Classes' }).Count } }
@@ -7164,8 +7028,6 @@ if ($SelfTest) {
         @{ N = 'azione-sicurezza'; K = 'act'; M = 'security'; Op = 'go'; T = 900 }
         @{ N = 'azione-rete-velocita'; K = 'act'; M = 'network'; Op = 'speed'; T = 300 }
         @{ N = 'azione-punto-ripristino'; K = 'act'; M = 'restore'; Op = 'create'; T = 300 }
-        @{ N = 'azione-backup'; K = 'act'; M = 'backup'; Op = 'go'; T = 600 }
-        @{ N = 'azione-backup-ripetuto'; K = 'act'; M = 'backup'; Op = 'go'; T = 600 }
         @{ N = 'cronologia-dopo-azioni'; K = 'mode'; M = 'history' }
         @{ N = 'menu-dopo-azioni'; K = 'hit' }
         @{ N = 'nascondi-in-area-notifica'; K = 'tray' }
