@@ -365,6 +365,21 @@ public static class Manager {
         return file;
     }
 
+    // Download rimasti da sessioni interrotte (programma chiuso a forza, PC spento): via dopo un giorno
+    public static void CleanStaleDownloads() {
+        try {
+            var root = Path.Combine(Path.GetTempPath(), "ErodyneSuite");
+            if (!Directory.Exists(root)) return;
+            foreach (var d in Directory.GetDirectories(root)) {
+                try {
+                    if (DateTime.UtcNow - Directory.GetCreationTimeUtc(d) < TimeSpan.FromDays(1)) continue;
+                    foreach (var f in Directory.GetFiles(d)) File.Delete(f);
+                    Directory.Delete(d);
+                } catch { }
+            }
+        } catch { }
+    }
+
     public static void TryDelete(string file) {
         try { File.Delete(file); Directory.Delete(Path.GetDirectoryName(file)); } catch { }
     }
@@ -375,7 +390,10 @@ public static class Manager {
         if (p.Lock == null) throw new Exception("installer non verificato");
         var si = new ProcessStartInfo(p.File, s.Def.SilentArgs) { UseShellExecute = true, WorkingDirectory = Environment.SystemDirectory }; // non dalla cartella temporanea
         if (s.Def.AdminInstall) si.Verb = "runas";
-        using (var proc = Process.Start(si)) { proc.WaitForExit(); return proc.ExitCode; }
+        using (var proc = Process.Start(si)) {
+            if (proc == null) throw new Exception("l'installer non è partito");
+            proc.WaitForExit(); return proc.ExitCode;
+        }
     }
 
     public static void Uninstall(AppState s) {
@@ -388,7 +406,7 @@ public static class Manager {
         if (s.Def.UninstallHive == Hive.Machine) si.Verb = "runas";
         using (var p = Process.Start(si)) {
             // gli uninstaller NSIS si copiano in %TEMP% e tornano subito: attende che il programma sparisca
-            p.WaitForExit();
+            if (p != null) p.WaitForExit();
         }
         // attende finché il programma sparisce o l'uninstaller (copia temporanea Au_.exe di NSIS) è ancora aperto
         for (int i = 0; i < 1200 && File.Exists(s.ExePath ?? ""); i++) {

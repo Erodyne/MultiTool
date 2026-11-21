@@ -108,7 +108,7 @@ public class MainForm : Form {
         foreach (Control c in new Control[] { pMain, pFolder, pGit, pLocate, pUninst, notes }) content.Controls.Add(c);
 
         Activated += (s, e) => { if (!AnyBusy) { foreach (var st in states) Manager.DetectLocal(st); RefreshUi(); } };
-        Shown += (s, e) => RefreshAll(true);
+        Shown += (s, e) => { RefreshAll(true); ThreadPool.QueueUserWorkItem(_ => Manager.CleanStaleDownloads()); };
         foreach (var st in states) Manager.DetectLocal(st);
         Go(-1);
     }
@@ -206,7 +206,7 @@ public class MainForm : Form {
             pFolder.Visible = c.InstallDir != null && Directory.Exists(c.InstallDir);
             pUninst.Visible = c.Installed && c.UninstallCmd != null;
             pUninst.Enabled = !c.Busy && !queueRunning;
-            pLocate.Visible = !c.Installed;
+            pLocate.Visible = !c.Installed && !c.Def.AdminInstall; // i programmi da amministratore stanno solo in Programmi
             string txt = string.IsNullOrEmpty(c.Notes)
                 ? (c.Checked ? (c.Error ?? "Nessuna nota per questa versione.") : "Controllo della versione su GitHub…")
                 : CleanNotes(c.Notes);
@@ -273,9 +273,13 @@ public class MainForm : Form {
                 SetStatus(s.Def.Name + ": installazione in corso…", -1); RefreshUi();
                 int code = Manager.RunInstaller(s, file);
                 Manager.DetectLocal(s);
-                msg = code == 0 && s.Installed
-                    ? s.Def.Name + (update ? " aggiornato" : " installato") + (s.InstalledVersion != null ? " (" + s.InstalledVersion + ")" : "")
-                    : s.Def.Name + ": installazione non completata (codice " + code + ")";
+                // l'installer può uscire con 0 senza aver cambiato nulla (es. programma aperto che blocca i file)
+                bool stale = update && s.InstalledVersion != null && Ver.Newer(job.LatestVersion, s.InstalledVersion);
+                if (code == 0 && s.Installed && !stale)
+                    msg = s.Def.Name + (update ? " aggiornato" : " installato") + (s.InstalledVersion != null ? " (" + s.InstalledVersion + ")" : "");
+                else if (stale)
+                    msg = s.Def.Name + ": aggiornamento non applicato, è ancora la " + s.InstalledVersion + ". Chiudi " + s.Def.Name + " e riprova";
+                else msg = s.Def.Name + ": installazione non completata (codice " + code + ")";
             } catch (OperationCanceledException) {
                 msg = s.Def.Name + ": installazione annullata";
             } catch (Win32Exception e) {

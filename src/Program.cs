@@ -8,12 +8,12 @@ using System.Windows.Forms;
 [assembly: AssemblyProduct("Erodyne Suite")]
 [assembly: AssemblyCompany("Erodyne")]
 [assembly: AssemblyDescription("Installa, aggiorna e avvia i programmi Erodyne")]
-[assembly: AssemblyVersion("1.4.0.0")]
-[assembly: AssemblyFileVersion("1.4.0.0")]
-[assembly: AssemblyInformationalVersion("1.4.0")]
+[assembly: AssemblyVersion("1.5.0.0")]
+[assembly: AssemblyFileVersion("1.5.0.0")]
+[assembly: AssemblyInformationalVersion("1.5.0")]
 
 public static class Program {
-    public const string Version = "1.4.0";
+    public const string Version = "1.5.0";
 
     public static void Log(object e) {
         try {
@@ -23,13 +23,13 @@ public static class Program {
         try { System.IO.Directory.CreateDirectory(Settings.Dir); System.IO.File.AppendAllText(System.IO.Path.Combine(Settings.Dir, "errori.log"), DateTime.Now + " " + e + "\r\n"); } catch { }
     }
 
-    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)] static extern bool SetDefaultDllDirectories(int flags);
     [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)] static extern bool SetDllDirectory(string path);
 
     [STAThread]
     static void Main() {
-        // per tutto il processo (anche le DLL caricate da Windows Forms): niente cartella dell'exe né cartella corrente
-        try { SetDllDirectory(""); SetDefaultDllDirectories(0x800); } catch { } // LOAD_LIBRARY_SEARCH_SYSTEM32
+        // niente DLL dalla cartella corrente. (Non si limita tutto il processo a System32: le estensioni di Esplora file
+        // caricate dalla finestra "Individua…" hanno DLL nelle loro cartelle e smetterebbero di funzionare.)
+        try { SetDllDirectory(""); } catch { }
         AppDomain.CurrentDomain.UnhandledException += (s, e) => { Log(e.ExceptionObject); MessageBox.Show("Errore: " + e.ExceptionObject, "Erodyne Suite"); };
         try { Run(); } catch (Exception e) { Log(e); MessageBox.Show("Erodyne Suite non riesce ad avviarsi:\n\n" + e, "Erodyne Suite", MessageBoxButtons.OK, MessageBoxIcon.Error); }
     }

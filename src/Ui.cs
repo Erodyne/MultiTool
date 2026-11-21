@@ -112,8 +112,10 @@ public class Btn : Control {
     bool hover, down;
 
     public Btn() {
-        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor, true);
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.SupportsTransparentBackColor | ControlStyles.Selectable, true);
         BackColor = Color.Transparent;
+        TabStop = true;
+        AccessibleRole = AccessibleRole.PushButton; // letto come pulsante dai lettori di schermo
         Cursor = Cursors.Hand;
         Font = Th.F(9.5f, FontStyle.Bold);
         Height = 40;
@@ -130,7 +132,15 @@ public class Btn : Control {
     protected override void OnMouseDown(MouseEventArgs e) { down = true; Invalidate(); base.OnMouseDown(e); }
     protected override void OnMouseUp(MouseEventArgs e) { down = false; Invalidate(); base.OnMouseUp(e); }
     protected override void OnEnabledChanged(EventArgs e) { Cursor = Enabled ? Cursors.Hand : Cursors.Default; Invalidate(); base.OnEnabledChanged(e); }
-    protected override void OnTextChanged(EventArgs e) { Invalidate(); base.OnTextChanged(e); }
+    protected override void OnTextChanged(EventArgs e) { AccessibleName = Text; Invalidate(); base.OnTextChanged(e); }
+    // da tastiera: Tab per spostarsi, Invio o Spazio per premere
+    protected override bool IsInputKey(Keys k) { return k == Keys.Enter || k == Keys.Space || base.IsInputKey(k); }
+    protected override void OnKeyUp(KeyEventArgs e) {
+        if (Enabled && (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Space)) { e.Handled = true; OnClick(EventArgs.Empty); }
+        base.OnKeyUp(e);
+    }
+    protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+    protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
 
     protected override void OnPaint(PaintEventArgs e) {
         var g = e.Graphics; Th.Hq(g);
@@ -154,8 +164,8 @@ public class Btn : Control {
                     fg = Enabled ? (hover ? (HoverColor.HasValue ? Color.White : Th.Text) : Th.Dim) : Th.Faint;
                     break;
                 case BtnKind.Danger:
-                    using (var b = new SolidBrush(hover ? Color.FromArgb(46, Th.Red) : Th.Surface2)) g.FillPath(b, p);
-                    using (var pen = new Pen(hover ? Th.Red : Th.Border)) g.DrawPath(pen, p);
+                    using (var b = new SolidBrush(hover && Enabled ? Color.FromArgb(46, Th.Red) : Th.Surface2)) g.FillPath(b, p);
+                    using (var pen = new Pen(hover && Enabled ? Th.Red : Th.Border)) g.DrawPath(pen, p);
                     fg = Enabled ? Th.Red : Th.Faint;
                     break;
                 default:
@@ -165,6 +175,7 @@ public class Btn : Control {
                     break;
             }
         }
+        if (Focused && ShowFocusCues) using (var p = Th.Round(new RectangleF(2, 2, Width - 5, Height - 5), 8)) using (var pen = new Pen(Color.FromArgb(200, 255, 255, 255), 1.5f) { DashStyle = DashStyle.Dot }) g.DrawPath(pen, p);
         if (Glyph != null && Th.HasGlyphs) {
             var sz = g.MeasureString(Text, Font);
             float total = sz.Width + 22, x = (Width - total) / 2f;
