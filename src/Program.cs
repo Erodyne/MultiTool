@@ -8,12 +8,14 @@ using System.Windows.Forms;
 [assembly: AssemblyProduct("Erodyne Suite")]
 [assembly: AssemblyCompany("Erodyne")]
 [assembly: AssemblyDescription("Installa, aggiorna e avvia i programmi Erodyne")]
-[assembly: AssemblyVersion("1.5.0.0")]
-[assembly: AssemblyFileVersion("1.5.0.0")]
+[assembly: AssemblyVersion("1.6.0.0")]
+[assembly: AssemblyFileVersion("1.6.0.0")]
 [assembly: AssemblyInformationalVersion("1.5.0")]
 
 public static class Program {
-    public const string Version = "1.5.0";
+    public const string Version = "1.6.0";
+    public const string MutexName = "ErodyneSuite.SingleInstance";
+    public static string StartMessage;
 
     public static void Log(object e) {
         try {
@@ -26,12 +28,23 @@ public static class Program {
     [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)] static extern bool SetDllDirectory(string path);
 
     [STAThread]
-    static void Main() {
+    static void Main(string[] args) {
         // niente DLL dalla cartella corrente. (Non si limita tutto il processo a System32: le estensioni di Esplora file
         // caricate dalla finestra "Individua…" hanno DLL nelle loro cartelle e smetterebbero di funzionare.)
         try { SetDllDirectory(""); } catch { }
         AppDomain.CurrentDomain.UnhandledException += (s, e) => { Log(e.ExceptionObject); MessageBox.Show("Errore: " + e.ExceptionObject, "Erodyne Suite"); };
-        try { Run(); } catch (Exception e) { Log(e); MessageBox.Show("Erodyne Suite non riesce ad avviarsi:\n\n" + e, "Erodyne Suite", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        try {
+            if (Array.IndexOf(args, "--disinstalla") >= 0) {
+                Application.EnableVisualStyles();
+                SelfInstall.Uninstall(Array.IndexOf(args, "--silenzioso") >= 0);
+                return;
+            }
+            Application.EnableVisualStyles();
+            if (SelfInstall.Handle(args)) return;
+            if (Array.IndexOf(args, "--benvenuto") >= 0) StartMessage = "Erodyne Suite installato: lo trovi nel menu Start e sul desktop";
+            else if (Array.IndexOf(args, "--aggiornato") >= 0) StartMessage = "Erodyne Suite aggiornato alla versione " + Version;
+            Run();
+        } catch (Exception e) { Log(e); MessageBox.Show("Erodyne Suite non riesce ad avviarsi:\n\n" + e, "Erodyne Suite", MessageBoxButtons.OK, MessageBoxIcon.Error); }
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] static extern IntPtr FindWindow(string c, string t);
@@ -51,9 +64,12 @@ public static class Program {
 
     static void Run() {
         bool first;
-        using (var m = new Mutex(true, "ErodyneSuite.SingleInstance", out first)) {
-            if (!first) { BringExisting(); return; }
-            Application.EnableVisualStyles();
+        using (var m = new Mutex(true, MutexName, out first)) {
+            if (!first) {
+                // appena installato/aggiornato, la vecchia istanza può impiegare un attimo a chiudersi
+                if (StartMessage != null) { try { first = m.WaitOne(5000); } catch (AbandonedMutexException) { first = true; } }
+                if (!first) { BringExisting(); return; }
+            }
             Application.SetCompatibleTextRenderingDefault(false);
             Application.ThreadException += (s, e) => { Log(e.Exception); MessageBox.Show(e.Exception.Message, "Erodyne Suite", MessageBoxButtons.OK, MessageBoxIcon.Warning); };
             Application.Run(new MainForm());

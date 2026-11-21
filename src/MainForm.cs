@@ -12,7 +12,7 @@ using System.Windows.Forms;
 public class MainForm : Form {
     readonly List<AppState> states = new List<AppState>();
     int page = -1; // -1 = Home, altrimenti indice del programma
-    string status = "Pronto";
+    string status = Program.StartMessage ?? "Pronto";
     double percent = -1;
     string suiteUpdate, suitePage;
     bool queueRunning;
@@ -368,7 +368,7 @@ public class MainForm : Form {
                     else if (n > 0) SetStatus(n == 1 ? "1 aggiornamento disponibile" : n + " aggiornamenti disponibili", -1);
                     else if (failed.Count > 0 && failed.Count == states.Count(x => x.Error != null) && states.All(x => x.Error != null)) SetStatus(failed[0].Error, -1);
                     else if (failed.Count > 0) SetStatus("Controllo completato, con avvisi per: " + string.Join(", ", failed.Select(x => x.Def.Name).ToArray()), -1);
-                    else SetStatus("Tutto aggiornato", -1);
+                    else SetStatus(Program.StartMessage != null ? Program.StartMessage + "  ·  tutto aggiornato" : "Tutto aggiornato", -1);
                 }
                 RefreshUi();
             });
