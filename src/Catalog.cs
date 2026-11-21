@@ -14,6 +14,8 @@ public class AppDef {
     public Hive UninstallHive;
     public string[] UninstallKeys;
     public string[] DefaultDirs;
+    public string[] LegacyExes;   // installazioni col vecchio nome: risultano installate, l'aggiornamento le sostituisce
+    public string LegacyId;       // vecchio id per le impostazioni salvate (path.<id>)
     public bool AdminInstall;
 }
 
@@ -59,17 +61,19 @@ public static class Catalog {
             DefaultDirs = new[] { Path.Combine(PF, "Remostation") }
         });
         Apps.Add(new AppDef {
-            Id = "acquisizione", Name = "Acquisizione Video", Initials = "AV", Glyph = "\uE714",
-            Tagline = "Cattura video da grabber USB",
+            Id = "video2all", LegacyId = "acquisizione", Name = "Video2All", Initials = "V2", Glyph = "\uE714",
+            Tagline = "Video per tutto: cattura dal grabber USB",
             Features = new[] {
                 "Registra VHS, console e videocamere dal grabber",
                 "Live a bassa latenza, taglio preciso al fotogramma",
                 "Restauro VHS, normalizzazione ed esportazione" },
             C1 = Color.FromArgb(0xA7, 0x8B, 0xFA), C2 = Color.FromArgb(0xF8, 0x71, 0x71),
-            Repo = "Erodyne/AcquisizioneVideo", AssetPattern = @"^AcquisizioneVideo-Setup[0-9A-Za-z._-]{0,40}\.exe$",
-            ExeName = "Acquisizione.exe", SilentArgs = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART", AdminInstall = false,
-            UninstallHive = Hive.User, UninstallKeys = new[] { "AcquisizioneVideo", "{6F6B2C1E-3A2D-4C8E-9B57-AC0E5D0F1A06}_is1" },
-            DefaultDirs = new[] { Path.Combine(LAD, @"Programs\AcquisizioneVideo") }
+            Repo = "Erodyne/Video2All", AssetPattern = @"^Video2All-Setup[0-9A-Za-z._-]{0,40}\.exe$",
+            ExeName = "Video2All.exe", SilentArgs = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART", AdminInstall = false,
+            // prima il nuovo nome, poi le voci della vecchia "Acquisizione Video"
+            UninstallHive = Hive.User, UninstallKeys = new[] { "Video2All", "Video2All_is1", "AcquisizioneVideo", "{6F6B2C1E-3A2D-4C8E-9B57-AC0E5D0F1A06}_is1" },
+            DefaultDirs = new[] { Path.Combine(LAD, @"Programs\Video2All") },
+            LegacyExes = new[] { Path.Combine(LAD, @"Programs\AcquisizioneVideo\Acquisizione.exe") }
         });
 
     }

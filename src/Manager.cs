@@ -76,11 +76,15 @@ public static class Manager {
         // non deve poter far avviare o disinstallare "come amministratore" un exe estraneo.
         foreach (var key in d.UninstallKeys)
             if (ReadUninstall(s, d.UninstallHive == Hive.Machine ? RegistryHive.LocalMachine : RegistryHive.CurrentUser, key)) break;
-        var custom = Settings.Get("path." + d.Id);
+        var custom = Settings.Get("path." + d.Id) ?? (d.LegacyId != null ? Settings.Get("path." + d.LegacyId) : null);
         var candidates = new List<string>();
         if (!string.IsNullOrEmpty(custom)) candidates.Add(custom);
         if (s.InstallDir != null) candidates.Add(Path.Combine(s.InstallDir, d.ExeName));
         foreach (var dir in d.DefaultDirs) candidates.Add(Path.Combine(dir, d.ExeName));
+        if (d.LegacyExes != null) {
+            if (s.InstallDir != null) foreach (var le in d.LegacyExes) candidates.Add(Path.Combine(s.InstallDir, Path.GetFileName(le)));
+            candidates.AddRange(d.LegacyExes);
+        }
         foreach (var c in candidates) {
             try {
                 if (d.AdminInstall && !InProtectedDir(c)) continue; // programmi da amministratore: solo da Programmi

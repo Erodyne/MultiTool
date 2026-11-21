@@ -50,7 +50,7 @@ public static class Th {
     }
     public static void Hq(Graphics g) {
         g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
+        g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit; // niente aloni colorati del ClearType su sfondi scuri e sfumati
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.PixelOffsetMode = PixelOffsetMode.HighQuality;
     }
@@ -103,12 +103,14 @@ public static class Th {
     }
 }
 
-public enum BtnKind { Primary, Secondary, Ghost, Danger, OnColor }
+public enum BtnKind { Primary, Secondary, Ghost, Danger, OnColor, Caption }
+public enum CapIcon { None, Min, Max, Restore, Close }
 
 public class Btn : Control {
     public BtnKind Kind = BtnKind.Secondary;
     public string Glyph;
     public Color? C1, C2, HoverColor;
+    public CapIcon Icon;
     bool hover, down;
 
     public Btn() {
@@ -142,8 +144,32 @@ public class Btn : Control {
     protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
     protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
 
+    void PaintCaption(Graphics g) {
+        g.SmoothingMode = SmoothingMode.None; g.PixelOffsetMode = PixelOffsetMode.None;
+        bool close = Icon == CapIcon.Close;
+        if (hover) using (var b = new SolidBrush(close ? Color.FromArgb(down ? 0xF1 : 0xE8, down ? 0x70 : 0x11, down ? 0x7A : 0x23) : Color.FromArgb(down ? 40 : 24, 255, 255, 255)))
+            g.FillRectangle(b, 0, 0, Width, Height);
+        var c = hover && close ? Color.White : (hover ? Th.Text : Th.Dim);
+        int cx = Width / 2, cy = Height / 2;
+        using (var p = new Pen(c, 1f)) {
+            switch (Icon) {
+                case CapIcon.Min: g.DrawLine(p, cx - 5, cy, cx + 5, cy); break;
+                case CapIcon.Max: g.DrawRectangle(p, cx - 5, cy - 5, 10, 10); break;
+                case CapIcon.Restore:
+                    g.DrawRectangle(p, cx - 5, cy - 3, 8, 8);
+                    g.DrawLine(p, cx - 3, cy - 5, cx + 5, cy - 5); g.DrawLine(p, cx + 5, cy - 5, cx + 5, cy + 3);
+                    break;
+                case CapIcon.Close:
+                    g.SmoothingMode = SmoothingMode.AntiAlias; g.PixelOffsetMode = PixelOffsetMode.Half;
+                    g.DrawLine(p, cx - 5, cy - 5, cx + 5, cy + 5); g.DrawLine(p, cx + 5, cy - 5, cx - 5, cy + 5);
+                    break;
+            }
+        }
+    }
+
     protected override void OnPaint(PaintEventArgs e) {
         var g = e.Graphics; Th.Hq(g);
+        if (Kind == BtnKind.Caption) { PaintCaption(g); return; }
         var r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
         Color fg = Th.Text;
         using (var p = Th.Round(r, 10)) {

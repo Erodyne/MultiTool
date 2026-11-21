@@ -35,6 +35,10 @@ jobs:
           "@
           function Shot($n) { $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds; $bmp = New-Object Drawing.Bitmap $b.Width, $b.Height
             [Drawing.Graphics]::FromImage($bmp).CopyFromScreen(0,0,0,0,$bmp.Size); $bmp.Save("$PWD\$n.png") }
+          # vecchia "Acquisizione Video" già installata
+          $old = "$env:LOCALAPPDATA\Programs\AcquisizioneVideo"; New-Item -ItemType Directory $old -Force | Out-Null; Copy-Item T.exe "$old\Acquisizione.exe"
+          $k0 = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AcquisizioneVideo'; New-Item $k0 -Force | Out-Null
+          Set-ItemProperty $k0 DisplayName 'Acquisizione Video'; Set-ItemProperty $k0 DisplayVersion '6.0.0'; Set-ItemProperty $k0 InstallLocation $old
           # --- autoinstallazione ---
           New-Item -ItemType Directory "$env:USERPROFILE\Downloads" -Force | Out-Null
           Copy-Item .\ErodyneSuite.exe "$env:USERPROFILE\Downloads\ErodyneSuite.exe"
@@ -47,6 +51,14 @@ jobs:
           $run = Get-Process ErodyneSuite -ErrorAction SilentlyContinue | ForEach-Object { $_.Path }; "in esecuzione: $run"
           $p = Get-Process ErodyneSuite | Select-Object -First 1
           Shot normal
+          $h0 = $p.MainWindowHandle; [W]::SetForegroundWindow($h0) | Out-Null; Start-Sleep 1
+          [W]::GetWindowRect($h0, [ref]($r0 = New-Object W+RECT)) | Out-Null
+          $r0 = New-Object W+RECT; [W]::GetWindowRect($h0, [ref]$r0) | Out-Null
+          [W]::SetCursorPos($r0.R - 23, $r0.T + 22) | Out-Null; Start-Sleep 1; Shot hoverclose
+          [W]::SetCursorPos($r0.R - 69, $r0.T + 22) | Out-Null; Start-Sleep 1; Shot hovermax
+          [W]::SetCursorPos($r0.L + 130, $r0.T + 46 + 290 + 29) | Out-Null; [W]::mouse_event(2,0,0,0,0); [W]::mouse_event(4,0,0,0,0); Start-Sleep 2; Shot v2a
+          $n = Start-Process notepad -PassThru; Start-Sleep 3; Shot inattiva; Stop-Process $n -Force; Start-Sleep 1
+          [W]::SetForegroundWindow($h0) | Out-Null; Start-Sleep 1; Shot riattivata
           $q = Start-Process "$env:USERPROFILE\Downloads\ErodyneSuite.exe" -PassThru; Start-Sleep 6; $q.Refresh(); "seconda apertura dal download chiusa: $($q.HasExited); processi: $((Get-Process ErodyneSuite).Count)"
           $h = $p.MainWindowHandle
           [W]::SendMessage($h, 0x112, [IntPtr]0xF030, [IntPtr]::Zero) | Out-Null; Start-Sleep 2

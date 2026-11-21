@@ -126,7 +126,7 @@ public static class SelfInstall {
     }
 
     public static void Uninstall(bool silent) {
-        if (!silent && MessageBox.Show("Disinstallare Erodyne Suite?\n\nI programmi installati con la suite (MultiTool, Remostation, Acquisizione Video) restano.",
+        if (!silent && MessageBox.Show("Disinstallare Erodyne Suite?\n\nI programmi installati con la suite (MultiTool, Remostation, Video2All) restano.",
                 "Erodyne Suite", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
         if (!CloseRunning("disinstallarlo", !silent)) return;
         try { File.Delete(StartLnk); } catch { }

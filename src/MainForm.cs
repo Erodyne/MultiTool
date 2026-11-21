@@ -19,7 +19,10 @@ public class MainForm : Form {
     int checking; // controlli online ancora in corso
 
     readonly Canvas title = new Canvas(), side = new Canvas(), content = new Canvas(), bar = new Canvas();
-    readonly Btn bMin = new Btn { Kind = BtnKind.Ghost, Text = "—" }, bMax = new Btn { Kind = BtnKind.Ghost, Text = "▢" }, bClose = new Btn { Kind = BtnKind.Ghost, Text = "✕" };
+    // pulsanti della barra del titolo disegnati a linee (i caratteri —, ▢, ✕ cambiano aspetto da un font all'altro)
+    readonly Btn bMin = new Btn { Kind = BtnKind.Caption, Icon = CapIcon.Min, Text = "Riduci a icona", TabStop = false },
+                 bMax = new Btn { Kind = BtnKind.Caption, Icon = CapIcon.Max, Text = "Ingrandisci", TabStop = false },
+                 bClose = new Btn { Kind = BtnKind.Caption, Icon = CapIcon.Close, Text = "Chiudi", TabStop = false };
 
     // Home
     readonly Btn hUpdateAll = new Btn { Kind = BtnKind.OnColor, Text = "Aggiorna tutto", Glyph = "" };
@@ -62,11 +65,10 @@ public class MainForm : Form {
             if (e.Button != MouseButtons.Left) return;
             if (e.Clicks == 2) ToggleMax(); else DragWindow();
         };
-        foreach (var b in new[] { bMin, bMax, bClose }) { b.Size = new Size(46, TitleH); b.Font = Th.F(10f); title.Controls.Add(b); }
+        foreach (var b in new[] { bMin, bMax, bClose }) { b.Size = new Size(46, TitleH - 1); title.Controls.Add(b); }
         bMin.Click += (s, e) => WindowState = FormWindowState.Minimized;
         bMax.Click += (s, e) => ToggleMax();
         bClose.Click += (s, e) => Close();
-        bClose.HoverColor = Th.Red;
         title.Resize += (s, e) => { bClose.Left = title.Width - 46; bMax.Left = bClose.Left - 46; bMin.Left = bMax.Left - 46; };
 
         side.Paint += PaintSide;
@@ -142,6 +144,10 @@ public class MainForm : Form {
             m.Result = IntPtr.Zero; return;
         }
         if (m.Msg == 0x84) { int h = HitEdge(m.LParam); if (h != 0) { m.Result = (IntPtr)h; return; } }
+        // senza bordo di sistema Windows ridisegnerebbe comunque cornice e pulsanti "fantasma" all'attivazione:
+        // WM_NCPAINT non disegna nulla, WM_NCACTIVATE conferma senza ridisegnare
+        if (m.Msg == 0x85) { m.Result = IntPtr.Zero; return; }
+        if (m.Msg == 0x86) { m.Result = (IntPtr)1; return; }
         base.WndProc(ref m);
         if (m.Msg == 0x24) { // WM_GETMINMAXINFO: massimizzata non copre la barra delle applicazioni
             try {
@@ -164,7 +170,8 @@ public class MainForm : Form {
     }
     protected override void OnSizeChanged(EventArgs e) {
         base.OnSizeChanged(e);
-        bMax.Text = WindowState == FormWindowState.Maximized ? "❐" : "▢";
+        bool mx = WindowState == FormWindowState.Maximized;
+        bMax.Icon = mx ? CapIcon.Restore : CapIcon.Max; bMax.Text = mx ? "Ripristina" : "Ingrandisci"; bMax.Invalidate();
     }
     protected override void OnFormClosing(FormClosingEventArgs e) {
         if (AnyBusy && e.CloseReason == CloseReason.UserClosing &&
@@ -531,7 +538,7 @@ public class MainForm : Form {
         Banner(g, r, Th.A1, Th.A2);
         using (var f = Th.F(9f, FontStyle.Bold)) Th.Text_(g, "ERODYNE  SUITE", f, Color.FromArgb(210, 255, 255, 255), new RectangleF(r.X + 36, r.Y + 28, 400, 20));
         using (var f = Th.F(24f, FontStyle.Bold)) Th.Text_(g, "I tuoi programmi, in un posto solo", f, Color.White, new RectangleF(r.X + 34, r.Y + 50, r.Width - 60, 46));
-        using (var f = Th.F(10.5f)) Th.Text_(g, "Installa, aggiorna e avvia MultiTool, Remostation e Acquisizione Video con un clic.", f, Color.FromArgb(225, 255, 255, 255), new RectangleF(r.X + 36, r.Y + 96, r.Width - 60, 24));
+        using (var f = Th.F(10.5f)) Th.Text_(g, "Installa, aggiorna e avvia MultiTool, Remostation e Video2All con un clic.", f, Color.FromArgb(225, 255, 255, 255), new RectangleF(r.X + 36, r.Y + 96, r.Width - 60, 24));
 
         int inst = states.Count(x => x.Installed), upd = states.Count(x => x.UpdateAvailable);
         using (var f = Th.F(13f, FontStyle.Bold)) Th.Text_(g, "Libreria", f, Th.Text, new RectangleF(M, r.Bottom + 20, 300, 30));
