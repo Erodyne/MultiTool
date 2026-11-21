@@ -1,0 +1,4 @@
+*.cs text eol=crlf
+*.yml text eol=lf
+*.md text eol=crlf
+*.ico binary

@@ -1,0 +1,80 @@
+name: Prova app
+on:
+  push:
+    branches: [ci-app-test]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  prova:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compila
+        shell: pwsh
+        run: |
+          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          foreach ($a in 'Backup','Spazio','Installa') {
+            Push-Location "apps\$a"
+            & $csc /nologo /target:winexe /optimize+ /out:"Erodyne$a.exe" /win32icon:"Erodyne$a.ico" /win32manifest:app.manifest `
+              /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Core.dll /r:System.Web.Extensions.dll /r:Microsoft.VisualBasic.dll src\*.cs
+            if (-not (Test-Path "Erodyne$a.exe")) { throw "Compilazione di $a non riuscita" }
+            Pop-Location
+          }
+      - name: Prepara il backup di prova
+        shell: pwsh
+        run: |
+          $doc = [Environment]::GetFolderPath('MyDocuments')
+          New-Item -ItemType Directory "$doc\Prova" -Force | Out-Null
+          1..30 | ForEach-Object { "file $_" | Set-Content "$doc\Prova\f$_.txt" }
+          New-Item -ItemType Directory C:\bk-prova -Force | Out-Null
+          New-Item -ItemType Directory "$env:APPDATA\ErodyneBackup" -Force | Out-Null
+          "destinazione=C:\bk-prova`r`ncartelle.sel=doc|desk`r`ncreato=2026-11-21T00:00:00" | Set-Content "$env:APPDATA\ErodyneBackup\impostazioni.txt" -Encoding UTF8
+      - name: Prova le interfacce
+        shell: pwsh
+        run: |
+          $out = "$PWD\esiti"; New-Item -ItemType Directory $out -Force | Out-Null
+          foreach ($a in 'Backup','Spazio','Installa') {
+            $p = Start-Process "apps\$a\Erodyne$a.exe" -ArgumentList '--prova', "`"$out\$a`"" -PassThru
+            if (-not $p.WaitForExit(1500000)) { $p.Kill(); "### $a | TEMPO SCADUTO" }
+            "### $a | uscita $($p.ExitCode)"
+            Get-Content "$out\$a\prova.txt" -ErrorAction SilentlyContinue | ForEach-Object { "    $_" }
+            $log = "$env:APPDATA\Erodyne$a\errori.log"
+            if (Test-Path $log) { Get-Content $log | ForEach-Object { "    ERR> $_" } }
+          }
+          "--- backup su disco:"
+          Get-ChildItem C:\bk-prova -Recurse -File | Select-Object -First 8 | ForEach-Object { "    $($_.FullName)" }
+          (Get-ChildItem C:\bk-prova -Recurse -File).Count
+          Get-Content "$env:APPDATA\ErodyneBackup\storico.txt" -ErrorAction SilentlyContinue
+      - name: Prova installazione e disinstallazione
+        shell: pwsh
+        run: |
+          foreach ($a in 'Backup','Spazio','Installa') {
+            Copy-Item "apps\$a\Erodyne$a.exe" "$env:TEMP\Erodyne$a-Setup-1.0.0.exe"
+            $p = Start-Process "$env:TEMP\Erodyne$a-Setup-1.0.0.exe" -ArgumentList '/S' -PassThru -Wait
+            $hk = if ($a -eq 'Installa') { 'HKLM:' } else { 'HKCU:' }
+            $k = Get-ItemProperty "$hk\Software\Microsoft\Windows\CurrentVersion\Uninstall\Erodyne$a" -ErrorAction SilentlyContinue
+            "### installa-$a | uscita $($p.ExitCode) | voce: $($k.DisplayName) $($k.DisplayVersion) | exe: $(Test-Path ($k.InstallLocation + "\Erodyne$a.exe"))"
+            $q = Start-Process ($k.InstallLocation + "\Erodyne$a.exe") -ArgumentList '--disinstalla', '/S' -PassThru -Wait
+            Start-Sleep 5
+            "### disinstalla-$a | uscita $($q.ExitCode) | voce rimasta: $(Test-Path "$hk\Software\Microsoft\Windows\CurrentVersion\Uninstall\Erodyne$a") | cartella rimasta: $(Test-Path $k.InstallLocation)"
+          }
+      - name: Backup automatico pianificato
+        shell: pwsh
+        run: |
+          Add-Content "$env:APPDATA\ErodyneBackup\impostazioni.txt" "automatico=1`r`nfrequenza=giorno`r`nora=03:00" -Encoding UTF8
+          Remove-Item "$env:APPDATA\ErodyneBackup\storico.txt" -ErrorAction SilentlyContinue
+          (Get-Content "$env:APPDATA\ErodyneBackup\impostazioni.txt") -notmatch '^ultimo=' | Set-Content "$env:APPDATA\ErodyneBackup\impostazioni.txt" -Encoding UTF8
+          $p = Start-Process "apps\Backup\ErodyneBackup.exe" -ArgumentList '--auto' -PassThru -Wait
+          "### auto | uscita $($p.ExitCode)"
+          Get-Content "$env:APPDATA\ErodyneBackup\storico.txt" -ErrorAction SilentlyContinue
+      - name: Salva gli esiti
+        if: always()
+        shell: pwsh
+        run: |
+          git config user.name "Claude"; git config user.email "noreply@anthropic.com"
+          git checkout --orphan ci-app-out
+          git rm -rqf . 2>$null
+          git add esiti
+          git commit -qm "Esiti prova app"
+          git push -f origin ci-app-out
