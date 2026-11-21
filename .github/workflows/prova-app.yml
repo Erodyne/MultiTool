@@ -102,6 +102,9 @@ jobs:
           git config user.name "Claude"; git config user.email "noreply@anthropic.com"
           git checkout --orphan ci-app-out
           git rm -rqf . 2>$null
-          git add esiti
+          New-Item -ItemType Directory esiti\exe -Force | Out-Null
+          Copy-Item suite\ErodyneSuite.exe esiti\exe\ -ErrorAction SilentlyContinue
+          foreach ($a in 'Backup','Spazio','Installa') { Copy-Item "apps\$a\Erodyne$a.exe" esiti\exe\ -ErrorAction SilentlyContinue }
+          git add -f esiti
           git commit -qm "Esiti prova app"
           git push -f origin ci-app-out

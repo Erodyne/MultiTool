@@ -89,7 +89,7 @@ public static class Catalog {
             DefaultDirs = new[] { Path.Combine(PF, "DiskVital") }
         });
         Apps.Add(new AppDef {
-            Id = "installa", Name = "Installa", Initials = "IN", Glyph = "\uE7B8",
+            Id = "installa", Name = "Erodyne Installa", Initials = "IN", Glyph = "\uE7B8",
             Tagline = "Programmi per un PC nuovo",
             Features = new[] {
                 "Programmi consigliati: spunta e installa",
@@ -102,7 +102,7 @@ public static class Catalog {
             DefaultDirs = new[] { Path.Combine(PF, "ErodyneInstalla") }
         });
         Apps.Add(new AppDef {
-            Id = "backup", Name = "Backup", Initials = "BK", Glyph = "\uE753",
+            Id = "backup", Name = "Erodyne Backup", Initials = "BK", Glyph = "\uE753",
             Tagline = "Copie di sicurezza delle tue cartelle",
             Features = new[] {
                 "Documenti, foto e preferiti su disco esterno o di rete",
@@ -115,7 +115,7 @@ public static class Catalog {
             DefaultDirs = new[] { Path.Combine(LAD, @"Programs\ErodyneBackup") }
         });
         Apps.Add(new AppDef {
-            Id = "spazio", Name = "Spazio", Initials = "SP", Glyph = "\uEB05",
+            Id = "spazio", Name = "Erodyne Spazio", Initials = "SP", Glyph = "\uEB05",
             Tagline = "Cosa occupa i dischi",
             Features = new[] {
                 "Mappa a riquadri di dischi e cartelle",
