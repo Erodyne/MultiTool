@@ -14,7 +14,7 @@ jobs:
           $env:GH_TOKEN = '${{ github.token }}'
           $env:GH_TOKEN = '${{ github.token }}'
           # gh release upload v2026.11.19.3 MultiTool-Setup-2026.11.19.3.exe.sig --clobber -R Erodyne/MultiTool; "upload firma: $LASTEXITCODE"
-          .\T.exe
+          .\T.exe; Get-Process Video2All,DiskVital -ErrorAction SilentlyContinue | ForEach-Object { "in esecuzione dopo installazione: " + $_.Name }
           "nsis choco: " + ((choco search nsis --exact --limit-output) -join " ")
           # utente standard, come un programma qualsiasi dell'utente
           New-Item -ItemType Directory C:\prova | Out-Null; icacls C:\prova /grant "Users:(OI)(CI)M" | Out-Null
