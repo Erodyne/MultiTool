@@ -68,6 +68,33 @@ jobs:
           $p = Start-Process "apps\Backup\ErodyneBackup.exe" -ArgumentList '--auto' -PassThru -Wait
           "### auto | uscita $($p.ExitCode)"
           Get-Content "$env:APPDATA\ErodyneBackup\storico.txt" -ErrorAction SilentlyContinue
+      - name: Prova la suite
+        shell: pwsh
+        run: |
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ /out:suite\ErodyneSuite.exe /win32icon:suite\ErodyneSuite.ico /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll suite\src\*.cs
+          if (-not (Test-Path suite\ErodyneSuite.exe)) { throw 'compilazione suite non riuscita' }
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          Add-Type @"
+          using System; using System.Runtime.InteropServices;
+          public class W { [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, int m, IntPtr w, IntPtr l);
+            [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+            [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+            [DllImport("user32.dll")] public static extern void mouse_event(int f, int x, int y, int d, int e);
+            [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+            public struct RECT { public int L, T, R, B; } }
+          "@
+          function Shot($n) { $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds; $bmp = New-Object Drawing.Bitmap $b.Width, $b.Height
+            [Drawing.Graphics]::FromImage($bmp).CopyFromScreen(0,0,0,0,$bmp.Size); New-Item -ItemType Directory esiti\Suite -Force | Out-Null; $bmp.Save("$PWD\esiti\Suite\$n.png") }
+          $p = Start-Process suite\ErodyneSuite.exe -ArgumentList '--portatile' -PassThru; Start-Sleep 20; $p.Refresh()
+          $h = $p.MainWindowHandle; [W]::SetForegroundWindow($h) | Out-Null; Start-Sleep 1
+          Shot home
+          $r = New-Object W+RECT; [W]::GetWindowRect($h, [ref]$r) | Out-Null
+          [W]::SetCursorPos([int](($r.L + $r.R) / 2 + 100), [int](($r.T + $r.B) / 2 + 100)) | Out-Null; Start-Sleep 1
+          [W]::mouse_event(0x800, 0, 0, -360, 0); Start-Sleep 2; Shot scorrimento
+          [W]::SendMessage($h, 0x112, [IntPtr]0xF030, [IntPtr]::Zero) | Out-Null; Start-Sleep 3; Shot massimizzata
+          [W]::SetCursorPos([int]($r.L + 120), [int]($r.T + 46 + 70 + 34 + 7 * 48 + 22)) | Out-Null; [W]::mouse_event(2,0,0,0,0); [W]::mouse_event(4,0,0,0,0); Start-Sleep 2; Shot ultima-app
+          Stop-Process $p -Force
+          Get-Content "$env:APPDATA\ErodyneSuite\errori.log" -ErrorAction SilentlyContinue
       - name: Salva gli esiti
         if: always()
         shell: pwsh

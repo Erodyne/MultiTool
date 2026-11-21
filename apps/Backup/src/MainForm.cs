@@ -31,8 +31,8 @@ public class MainForm : AppForm {
         foreach (var b in new[] { bRun, bDest, bOpen, bAdd, bDel, bRestore, bAuto, bFreq, bTime }) content.Controls.Add(b);
         bRun.Font = Th.F(10f, FontStyle.Bold);
         list.Headers = new[] { "DIMENSIONE", "NEL BACKUP" };
-        list.ColW = new[] { 110, 110 };
-        list.StatusW = 210;
+        list.ColW = new[] { 96, 104 };
+        list.StatusW = 180;
         list.EmptyTitle = "Nessuna cartella";
         list.CheckChanged += () => { Engine.SaveSelection(folders.Where((f, i) => list.Items[i].Checked).Select(f => f.Id)); UpdateUi(); };
         list.SelectionChanged += UpdateUi;

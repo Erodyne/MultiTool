@@ -109,7 +109,7 @@ public class MainForm : AppForm {
                     Cols = new[] { (p.Winget.Count + p.Local.Count).ToString(), p.Origin == "tuo" ? "creato da te" : p.Origin == "MultiTool" ? "da MultiTool" : "predefinito" } });
             list.EmptyTitle = "Nessun profilo";
         } else {
-            list.Headers = new[] { tab == 0 ? "CATEGORIA" : "VERSIONE", tab == 0 ? "" : "ORIGINE" }; list.ColW = new[] { 150, tab == 0 ? 10 : 90 }; list.StatusW = 200;
+            list.Headers = new[] { tab == 0 ? "CATEGORIA" : "VERSIONE", tab == 0 ? "" : "ORIGINE" }; list.ColW = new[] { 150, tab == 0 ? 10 : 130 }; list.StatusW = 200;
             var src = tab == 0 ? rec.Concat(extra).ToList() : found;
             foreach (var p in src) list.Items.Add(Item(p));
             list.EmptyTitle = tab == 0 ? "Nessun programma" : searching ? "Cerco…" : lastQuery.Length > 0 ? "Nessun risultato per \"" + lastQuery + "\"" : "Cerca un programma";
@@ -142,7 +142,7 @@ public class MainForm : AppForm {
     void Layout_() {
         int W = content.Width, H = content.Height;
         if (W < 50) return;
-        hero = new RectangleF(M, 22, W - 2 * M, 160);
+        hero = new RectangleF(M, 22, W - 2 * M, 178);
         int iw = Math.Max(170, bInstall.Measure());
         bInstall.SetBounds((int)hero.Right - 30 - iw, (int)hero.Y + 30, iw, 46);
         searchBox = new RectangleF(hero.X + 30, hero.Bottom - 62, Math.Min(560, hero.Width - 60 - 120), 42);
@@ -195,7 +195,7 @@ public class MainForm : AppForm {
                     string src = c.Length >= 4 && (c[c.Length - 1] == "winget" || c[c.Length - 1] == "msstore") ? c[c.Length - 1] : "";
                     if (c[1].EndsWith("…")) continue;                         // ID troncato: non installabile con certezza
                     if (found.Any(x => x.Id.Equals(c[1], StringComparison.OrdinalIgnoreCase))) continue;
-                    var p = new Pkg { Name = c[0], Id = c[1], Version = c[2], Source = src.Length > 0 ? src : "winget", Match = null };
+                    var p = new Pkg { Name = c[0], Id = c[1], Version = c[2] == "Unknown" || c[2] == "Sconosciuto" ? "—" : c[2], Source = src.Length > 0 ? src : "winget", Match = null };
                     string v; if (wg.TryGetValue(p.Id, out v)) { p.Installed = true; }
                     found.Add(p);
                 }
@@ -241,7 +241,7 @@ public class MainForm : AppForm {
             }
             Ui(() => {
                 busy = false; Progress = -1;
-                Status = (ct.IsCancellationRequested ? "Interrotto: " : "Finito: ") + ok + " installati" + (err > 0 ? ", " + err + " non riusciti" : "") + (reboot ? " · riavvia il PC per completare" : "");
+                Status = (ct.IsCancellationRequested ? "Interrotto: " : "Finito: ") + ok + (ok == 1 ? " installato" : " installati") + (err > 0 ? ", " + err + (err == 1 ? " non riuscito" : " non riusciti") : "") + (reboot ? " · riavvia il PC per completare" : "");
                 Fill(); UpdateUi();
                 ThreadPool.QueueUserWorkItem(__ => { var w = Winget.Installed(); Ui(() => { wg = w; }); });
             });
@@ -267,7 +267,7 @@ public class MainForm : AppForm {
         foreach (var id in pr.Winget) {
             var p = rec.Concat(extra).FirstOrDefault(x => x.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
             if (p == null) {
-                p = new Pkg { Id = id, Name = id.Contains(".") ? id.Substring(id.IndexOf('.') + 1) : id, Cat = "Profilo " + pr.Name, Source = System.Text.RegularExpressions.Regex.IsMatch(id, "^[0-9A-Z]{12}$") ? "msstore" : "winget" };
+                p = new Pkg { Id = id, Name = id.Contains(".") ? id.Substring(id.IndexOf('.') + 1) : id, Cat = "Profilo " + pr.Name, Source = System.Text.RegularExpressions.Regex.IsMatch(id, "^(9[0-9A-Z]{11}|XP[0-9A-Z]{12})$") ? "msstore" : "winget" };
                 string v; if (wg.TryGetValue(id, out v)) { p.Installed = true; p.Version = v; }
                 extra.Add(p);
             }
