@@ -75,6 +75,19 @@ public static class Catalog {
             DefaultDirs = new[] { Path.Combine(LAD, @"Programs\Video2All") },
             LegacyExes = new[] { Path.Combine(LAD, @"Programs\AcquisizioneVideo\Acquisizione.exe") }
         });
+        Apps.Add(new AppDef {
+            Id = "diskvital", Name = "DiskVital", Initials = "DV", Glyph = "\uEDA2",
+            Tagline = "Salute dei dischi S.M.A.R.T.",
+            Features = new[] {
+                "Stato di dischi SATA, NVMe e USB, attributo per attributo",
+                "Giudizio chiaro con motivo e consiglio",
+                "Storico, avvisi accanto all'orologio e rapporto" },
+            C1 = Color.FromArgb(0x34, 0xD3, 0x99), C2 = Color.FromArgb(0x7C, 0x5C, 0xFF),
+            Repo = "Erodyne/DiskVital", AssetPattern = @"^DiskVital-Setup-[0-9A-Za-z._-]{0,40}\.exe$",
+            ExeName = "DiskVital.exe", SilentArgs = "/S", AdminInstall = true,
+            UninstallHive = Hive.Machine, UninstallKeys = new[] { "DiskVital" },
+            DefaultDirs = new[] { Path.Combine(PF, "DiskVital") }
+        });
 
     }
 }

@@ -6,10 +6,10 @@
      incollala in Catalog.ReleaseKey (src\Catalog.cs) e ricompila la suite.
   2) A ogni release:   .\Firma-Release.ps1 -File MultiTool-Setup-2026.11.20.1.exe -Programma multitool -Versione 2026.11.20.1
      Crea "MultiTool-Setup-2026.11.20.1.exe.sig": caricalo nella release insieme all'installer.
-     -Programma: multitool | remostation | video2all      -Versione: uguale al tag della release (senza "v").
+     -Programma: multitool | remostation | video2all | diskvital      -Versione: uguale al tag della release (senza "v").
      La firma vale solo per quel programma e quella versione.
 #>
-param([switch]$NuovaChiave, [string]$File, [ValidateSet('multitool','remostation','video2all')][string]$Programma, [string]$Versione,
+param([switch]$NuovaChiave, [string]$File, [ValidateSet('multitool','remostation','video2all','diskvital')][string]$Programma, [string]$Versione,
       [string]$Chiave = "$PSScriptRoot\erodyne-firma-PRIVATA.xml")
 $ErrorActionPreference = 'Stop'
 if ($NuovaChiave) {

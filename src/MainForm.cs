@@ -474,6 +474,7 @@ public class MainForm : Form {
     // ---------- disposizione e disegno del contenuto ----------
     const int M = 32;
     RectangleF heroHome, heroApp;
+    bool compact;
     List<RectangleF> cards = new List<RectangleF>();
 
     void Layout_() {
@@ -486,6 +487,19 @@ public class MainForm : Form {
             hCheck.SetBounds(hUpdateAll.Right + 10, (int)heroHome.Bottom - 64, bw2, 40);
             cards.Clear();
             float top = heroHome.Bottom + 64, gap = 20, cw = (W - 2 * M - gap * (states.Count - 1)) / states.Count;
+            compact = cw < 230;
+            if (compact) {
+                // finestra stretta: schede orizzontali su due colonne
+                int cols = 2, rows = (states.Count + 1) / 2;
+                float w2 = (W - 2 * M - gap) / cols, h2 = Math.Max(112, Math.Min(150, (H - top - 28 - gap * (rows - 1)) / rows));
+                for (int i = 0; i < states.Count; i++) {
+                    var r = new RectangleF(M + (i % cols) * (w2 + gap), top + (i / cols) * (h2 + gap), w2, h2);
+                    cards.Add(r);
+                    cardMore[i].Visible = false;
+                    cardMain[i].SetBounds((int)(r.Right - 20 - 132), (int)(r.Bottom - 20 - 38), 132, 38);
+                }
+                return;
+            }
             float ch = Math.Max(300, Math.Min(380, H - top - 28));
             for (int i = 0; i < states.Count; i++) {
                 var r = new RectangleF(M + i * (cw + gap), top, cw, ch);
@@ -538,7 +552,7 @@ public class MainForm : Form {
         Banner(g, r, Th.A1, Th.A2);
         using (var f = Th.F(9f, FontStyle.Bold)) Th.Text_(g, "ERODYNE  SUITE", f, Color.FromArgb(210, 255, 255, 255), new RectangleF(r.X + 36, r.Y + 28, 400, 20));
         using (var f = Th.F(24f, FontStyle.Bold)) Th.Text_(g, "I tuoi programmi, in un posto solo", f, Color.White, new RectangleF(r.X + 34, r.Y + 50, r.Width - 60, 46));
-        using (var f = Th.F(10.5f)) Th.Text_(g, "Installa, aggiorna e avvia MultiTool, Remostation e Video2All con un clic.", f, Color.FromArgb(225, 255, 255, 255), new RectangleF(r.X + 36, r.Y + 96, r.Width - 60, 24));
+        using (var f = Th.F(10.5f)) Th.Text_(g, "Installa, aggiorna e avvia MultiTool, Remostation, Video2All e DiskVital con un clic.", f, Color.FromArgb(225, 255, 255, 255), new RectangleF(r.X + 36, r.Y + 96, r.Width - 60, 24));
 
         int inst = states.Count(x => x.Installed), upd = states.Count(x => x.UpdateAvailable);
         using (var f = Th.F(13f, FontStyle.Bold)) Th.Text_(g, "Libreria", f, Th.Text, new RectangleF(M, r.Bottom + 20, 300, 30));
@@ -547,6 +561,7 @@ public class MainForm : Form {
 
         for (int i = 0; i < cards.Count && i < states.Count; i++) {
             var c = cards[i]; var s = states[i];
+            if (compact) { PaintCompactCard(g, c, s); continue; }
             using (var p = Th.Round(c, 18)) {
                 using (var b = new SolidBrush(Th.Surface)) g.FillPath(b, p);
                 using (var pen = new Pen(Th.Border)) g.DrawPath(pen, p);
@@ -570,6 +585,24 @@ public class MainForm : Form {
                 fy += h;
             }
         }
+    }
+
+    void PaintCompactCard(Graphics g, RectangleF c, AppState s) {
+        using (var p = Th.Round(c, 16)) {
+            using (var b = new SolidBrush(Th.Surface)) g.FillPath(b, p);
+            var clip = g.Clip; g.SetClip(p, CombineMode.Intersect);
+            var art = new RectangleF(c.X, c.Y, 96, c.Height);
+            using (var b = Th.Grad(art, Color.FromArgb(70, s.Def.C1), Color.FromArgb(30, s.Def.C2))) g.FillRectangle(b, art);
+            g.Clip = clip;
+            using (var pen = new Pen(Th.Border)) g.DrawPath(pen, p);
+        }
+        float ts = Math.Min(56, c.Height - 40);
+        Th.AppTile(g, s.Def, new RectangleF(c.X + 20, c.Y + (c.Height - ts) / 2, ts, ts));
+        float x = c.X + 116, w = c.Width - 116 - 20;
+        using (var f = Th.F(13f, FontStyle.Bold)) Th.Text_(g, s.Def.Name, f, Th.Text, new RectangleF(x, c.Y + 16, w, 26));
+        using (var f = Th.F(9f)) Th.Text_(g, s.Def.Tagline, f, Th.Dim, new RectangleF(x, c.Y + 42, w, 20));
+        Color dot; string line = StatusLine(s, out dot);
+        float pw; Th.Pill(g, line, dot == Th.Faint ? Th.Dim : dot, new PointF(x, c.Bottom - 20 - 31), out pw, Math.Max(60, w - 132 - 12));
     }
 
     void PaintApp(Graphics g, AppState s) {
