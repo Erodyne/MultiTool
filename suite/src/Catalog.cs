@@ -89,43 +89,43 @@ public static class Catalog {
             DefaultDirs = new[] { Path.Combine(PF, "DiskVital") }
         });
         Apps.Add(new AppDef {
-            Id = "installa", Name = "Erodyne Installa", Initials = "IN", Glyph = "\uE7B8",
+            Id = "erodyinstaller", Name = "ErodyInstaller", Initials = "IN", Glyph = "\uE7B8",
             Tagline = "Programmi per un PC nuovo",
             Features = new[] {
                 "Programmi consigliati: spunta e installa",
                 "Cerca qualsiasi programma dal catalogo di winget",
                 "Profili da riusare su ogni PC che prepari" },
             C1 = Color.FromArgb(0x7C, 0x5C, 0xFF), C2 = Color.FromArgb(0xEC, 0x48, 0x99),
-            Repo = "Erodyne/Installa", AssetPattern = @"^ErodyneInstalla-Setup-[0-9A-Za-z._-]{0,40}\.exe$",
-            ExeName = "ErodyneInstalla.exe", SilentArgs = "/S", AdminInstall = true,
-            UninstallHive = Hive.Machine, UninstallKeys = new[] { "ErodyneInstalla" },
-            DefaultDirs = new[] { Path.Combine(PF, "ErodyneInstalla") }
+            Repo = "Erodyne/ErodyInstaller", AssetPattern = @"^ErodyInstaller-Setup-[0-9A-Za-z._-]{0,40}\.exe$",
+            ExeName = "ErodyInstaller.exe", SilentArgs = "/S", AdminInstall = true,
+            UninstallHive = Hive.Machine, UninstallKeys = new[] { "ErodyInstaller" },
+            DefaultDirs = new[] { Path.Combine(PF, "ErodyInstaller") }
         });
         Apps.Add(new AppDef {
-            Id = "backup", Name = "Erodyne Backup", Initials = "BK", Glyph = "\uE753",
+            Id = "erodybackup", Name = "ErodyBackup", Initials = "BK", Glyph = "\uE753",
             Tagline = "Copie di sicurezza delle tue cartelle",
             Features = new[] {
                 "Documenti, foto e preferiti su disco esterno o di rete",
                 "Automatico ogni giorno o settimana, recupera quelli saltati",
                 "Protezione anti-ransomware e ripristino con un clic" },
             C1 = Color.FromArgb(0x22, 0xD3, 0xEE), C2 = Color.FromArgb(0x3B, 0x82, 0xF6),
-            Repo = "Erodyne/Backup", AssetPattern = @"^ErodyneBackup-Setup-[0-9A-Za-z._-]{0,40}\.exe$",
-            ExeName = "ErodyneBackup.exe", SilentArgs = "/S", AdminInstall = false,
-            UninstallHive = Hive.User, UninstallKeys = new[] { "ErodyneBackup" },
-            DefaultDirs = new[] { Path.Combine(LAD, @"Programs\ErodyneBackup") }
+            Repo = "Erodyne/ErodyBackup", AssetPattern = @"^ErodyBackup-Setup-[0-9A-Za-z._-]{0,40}\.exe$",
+            ExeName = "ErodyBackup.exe", SilentArgs = "/S", AdminInstall = false,
+            UninstallHive = Hive.User, UninstallKeys = new[] { "ErodyBackup" },
+            DefaultDirs = new[] { Path.Combine(LAD, @"Programs\ErodyBackup") }
         });
         Apps.Add(new AppDef {
-            Id = "spazio", Name = "Erodyne Spazio", Initials = "SP", Glyph = "\uEB05",
+            Id = "erodydiskspace", Name = "ErodyDiskSpace", Initials = "SP", Glyph = "\uEB05",
             Tagline = "Cosa occupa i dischi",
             Features = new[] {
                 "Mappa a riquadri di dischi e cartelle",
                 "I file più grandi e lo spazio per tipo di file",
                 "Elimina nel Cestino, con le cartelle di Windows protette" },
             C1 = Color.FromArgb(0xFB, 0xBF, 0x24), C2 = Color.FromArgb(0xF9, 0x73, 0x16),
-            Repo = "Erodyne/Spazio", AssetPattern = @"^ErodyneSpazio-Setup-[0-9A-Za-z._-]{0,40}\.exe$",
-            ExeName = "ErodyneSpazio.exe", SilentArgs = "/S", AdminInstall = false,
-            UninstallHive = Hive.User, UninstallKeys = new[] { "ErodyneSpazio" },
-            DefaultDirs = new[] { Path.Combine(LAD, @"Programs\ErodyneSpazio") }
+            Repo = "Erodyne/ErodyDiskSpace", AssetPattern = @"^ErodyDiskSpace-Setup-[0-9A-Za-z._-]{0,40}\.exe$",
+            ExeName = "ErodyDiskSpace.exe", SilentArgs = "/S", AdminInstall = false,
+            UninstallHive = Hive.User, UninstallKeys = new[] { "ErodyDiskSpace" },
+            DefaultDirs = new[] { Path.Combine(LAD, @"Programs\ErodyDiskSpace") }
         });
 
     }
