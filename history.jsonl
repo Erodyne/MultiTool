@@ -1,0 +1,24 @@
+﻿{"Time":"2026-11-22T09:09:28","Area":"Catalogo winget","Name":"VLC media player","Result":"Installato","Kind":"ok"}
+{"Time":"2026-11-22T09:09:39","Area":"Aggiorna programmi","Name":"7-Zip 23.01 (x64)","Result":"Aggiornato","Kind":"ok"}
+{"Time":"2026-11-22T09:11:24","Area":"Pulizia disco","Name":"File temporanei utente","Result":"Liberati 157 MB","Kind":"ok"}
+{"Time":"2026-11-22T09:11:24","Area":"Pulizia disco","Name":"File temporanei di Windows","Result":"Liberati 10 KB","Kind":"ok"}
+{"Time":"2026-11-22T09:11:28","Area":"Privacy","Name":"ID pubblicità disattivato","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-22T09:11:28","Area":"Privacy","Name":"Esperienze personalizzate disattivate","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-22T09:11:28","Area":"Privacy","Name":"Niente app promosse e suggerimenti in Start","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-22T09:11:28","Area":"Privacy","Name":"Niente pubblicità nella schermata di blocco","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-22T09:11:29","Area":"Privacy","Name":"Cronologia attività disattivata","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-22T09:11:29","Area":"Privacy","Name":"Niente risultati Bing nella ricerca di Start","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-22T09:11:29","Area":"Privacy","Name":"Copilot disattivato","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-22T09:11:29","Area":"Privacy","Name":"Recall disattivato","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-22T09:11:29","Area":"Privacy","Name":"Niente pubblicità in Esplora file e Start","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-22T09:11:29","Area":"Privacy","Name":"Nessuna richiesta di feedback","Result":"Applicato","Kind":"ok"}
+{"Time":"2026-11-22T09:11:34","Area":"Servizi","Name":"Apache","Result":"Impostato su manuale","Kind":"ok"}
+{"Time":"2026-11-22T09:11:39","Area":"Servizi","Name":"Apache","Result":"Ripristinato","Kind":"ok"}
+{"Time":"2026-11-22T09:11:43","Area":"Avvio automatico","Name":"AzureArcSetup","Result":"Disattivato","Kind":"ok"}
+{"Time":"2026-11-22T09:11:48","Area":"Sicurezza","Name":"Protezione in tempo reale","Result":"Corretto","Kind":"ok"}
+{"Time":"2026-11-22T09:12:04","Area":"Sicurezza","Name":"Firme antivirus","Result":"Corretto","Kind":"ok"}
+{"Time":"2026-11-22T09:12:45","Area":"Sicurezza","Name":"Ultima scansione rapida","Result":"Corretto","Kind":"ok"}
+{"Time":"2026-11-22T09:12:45","Area":"Sicurezza","Name":"Controllo account utente (UAC)","Result":"Corretto","Kind":"ok"}
+{"Time":"2026-11-22T09:12:45","Area":"Sicurezza","Name":"Account Administrator integrato","Result":"Stai usando proprio questo account: crea prima un altro amministratore","Kind":"skip"}
+{"Time":"2026-11-22T09:12:45","Area":"Sicurezza","Name":"Desktop remoto","Result":"Corretto","Kind":"ok"}
+{"Time":"2026-11-22T09:12:45","Area":"Sicurezza","Name":"Esecuzione automatica da USB","Result":"Corretto","Kind":"ok"}
