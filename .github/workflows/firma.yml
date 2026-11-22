@@ -1,0 +1,10 @@
+name: Allega firma
+on: { push: { branches: [ci-firma] } }
+permissions: { contents: write }
+jobs:
+  firma:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env: { GH_TOKEN: "${{ github.token }}" }
+        run: gh release upload v2026.11.22.1 MultiTool-Setup-2026.11.22.1.exe.sig --clobber -R ${{ github.repository }}
