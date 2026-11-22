@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -26,7 +26,7 @@ public static class Catalog {
     // Impostata: parte solo un installer con "<file>.sig" valido; un account GitHub rubato non basta più.
     // La firma copre programma + versione + impronta: non si può spacciare l'installer di un programma
     // per un altro, né ripubblicare una vecchia versione vulnerabile con un numero più alto.
-    public const string ReleaseKey = "<RSAKeyValue><Modulus>kN5wgU/5hGfVfGBzNs1Yfl5NaSm2Gdl3is6hIbFiQmKtexFYBdQUK3H3ovgUHWUe4bIBaQpCmvG/Ytu46u1jdE6u9SZCt8pqjl5C0aZ/EM94Wde/jtQlCTiEfwtAQWVYi+ojGbs4uW3EAcQWC+Ss8bLlnJoWs17WE9RgXkdluBlmo58MIxRtJ3QzqYFPryoRi+IwVdtESw9+gqt3C0+elczn3mamt1qhGNQ3J8MDZq3+M3nEQnjQbyMTtskPfl2HMCDhjj6Q7A/LHUKqQZkSn++MkWIS0nhjv7lw4D/0mvbwjQ5/zJRC3h7nC9MuRfjfvx4atW37ZoB8THCIBdkCL7SXngMKXuj3t2/OVj/hSCul50BCrRLos+1zAbtiiAIlYBUbUu8ceHQS0oxwYXpGferQw44bzCaxsBKGIkZQDDeV2TNmpESQoFIUmGTxCp+Ni3KeHzVcGHhsYdZZHJDklV6EIdjp5PJ3qdVVpaREGdM9UbigYlYY7dhxrTsLp+Zx</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>";
+    public const string ReleaseKey = "<RSAKeyValue><Modulus>sPWkxa3C7zzJu561PaBDpSMITDnI9DI11prvahvbNr555Ow/eFy6vRpUDlBDMh/mWSxMKZrj/zPuSZmOvVD6JwvEEsI8s1oQ0Za2yuG0ZkLauD4uOLQqCzMFnB9oqk3601yoL+mOOTC6L1men/80VGFag95wxok8TTAle2MQtYjTBax2KDJYSEyqmjhPDCYdMkWzpnmjzlsEXK/YNAPx5Ogjwb+PIcR5sOZSADvJTiS20Wc8PXGtTxvXuad4PTEmqZmSWQIy/ayHEnLaNjeaGVsBhVGj/3/C9FJ6px4Uby2UNBI8jI12l1B9W+0roj8zuSOuMeTwBzu7uRggFeXvHOWTk9s62xDv6bCoAninjLiIXw3PEWQyUS9IdaKZOqIdZ9AGmVji4utnMVu0QwfU+yIzOOrYJWcCn6UcrIBK7G0HegRSXeYujgcN3e4HY2Kbc4Ciy9zUS5bnjhsbUSaAKuaAn+tg/f9GD8Kkuv+hnVGEeukXz/qZ1W25GFGmJJg1</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>";
     public static readonly List<AppDef> Apps = new List<AppDef>();
 
     // dal registro di sistema, non dalle variabili d'ambiente (modificabili dall'utente)

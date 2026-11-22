@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Reflection;
 using System.Threading;
 using System.Windows.Forms;
@@ -8,12 +8,12 @@ using System.Windows.Forms;
 [assembly: AssemblyProduct("Erodyne Suite")]
 [assembly: AssemblyCompany("Erodyne")]
 [assembly: AssemblyDescription("Installa, aggiorna e avvia i programmi Erodyne")]
-[assembly: AssemblyVersion("1.9.1.0")]
-[assembly: AssemblyFileVersion("1.9.1.0")]
-[assembly: AssemblyInformationalVersion("1.9.1")]
+[assembly: AssemblyVersion("1.9.2.0")]
+[assembly: AssemblyFileVersion("1.9.2.0")]
+[assembly: AssemblyInformationalVersion("1.9.2")]
 
 public static class Program {
-    public const string Version = "1.9.1";
+    public const string Version = "1.9.2";
     public const string MutexName = "ErodyneSuite.SingleInstance";
     public static string StartMessage;
 
