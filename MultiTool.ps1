@@ -5658,12 +5658,12 @@ function Select-BackupDest-Legacy {
 }
 $BkTaskName = 'MultiTool - Backup automatico'
 function Update-BackupTask {
-    # il backup è passato a Erodyne Backup: quando la sua attività esiste, tolgo quella vecchia di MultiTool
+    # il backup è passato a ErodyBackup: quando la sua attività esiste, tolgo quella vecchia di MultiTool
     if (-not $Settings.BackupAuto) { Unregister-ScheduledTask -TaskName $BkTaskName -Confirm:$false -ErrorAction SilentlyContinue; return }
-    if (@(Get-ScheduledTask -TaskName 'Erodyne Backup - *' -ErrorAction SilentlyContinue).Count) {
+    if (@(Get-ScheduledTask -TaskName 'ErodyBackup - *' -ErrorAction SilentlyContinue).Count) {
         Unregister-ScheduledTask -TaskName $BkTaskName -Confirm:$false -ErrorAction SilentlyContinue
         $Settings.BackupAuto = $false; Save-Settings
-        Write-ErrLog 'Backup automatico passato a Erodyne Backup: attività di MultiTool rimossa'
+        Write-ErrLog 'Backup automatico passato a ErodyBackup: attività di MultiTool rimossa'
     }
 }
 function Update-BackupInfo { }
@@ -5815,9 +5815,9 @@ function Start-Stress {
 
 # --- Programmi della Erodyne Suite ---
 $SuiteApps = @{
-    installa  = @{ N = 'Erodyne Installa'; Exe = 'ErodyneInstalla.exe'; Dir = 'ErodyneInstalla'; User = $false; Repo = 'Erodyne/Installa' }
-    backup    = @{ N = 'Erodyne Backup'; Exe = 'ErodyneBackup.exe'; Dir = 'ErodyneBackup'; User = $true; Repo = 'Erodyne/Backup' }
-    spazio    = @{ N = 'Erodyne Spazio'; Exe = 'ErodyneSpazio.exe'; Dir = 'ErodyneSpazio'; User = $true; Repo = 'Erodyne/Spazio' }
+    installa  = @{ N = 'ErodyInstaller'; Exe = 'ErodyInstaller.exe'; Dir = 'ErodyInstaller'; User = $false; Repo = 'Erodyne/ErodyInstaller' }
+    backup    = @{ N = 'ErodyBackup'; Exe = 'ErodyBackup.exe'; Dir = 'ErodyBackup'; User = $true; Repo = 'Erodyne/ErodyBackup' }
+    spazio    = @{ N = 'ErodyDiskSpace'; Exe = 'ErodyDiskSpace.exe'; Dir = 'ErodyDiskSpace'; User = $true; Repo = 'Erodyne/ErodyDiskSpace' }
     diskvital = @{ N = 'DiskVital'; Exe = 'DiskVital.exe'; Dir = 'DiskVital'; User = $false; Repo = 'Erodyne/Diskvital' }
 }
 function Get-SuiteAppPath([string]$Id) {
@@ -6009,7 +6009,7 @@ function Update-LastOps {
     }
     if ($Settings.LastBackup) { try { $last['bk'] = [datetime]$Settings.LastBackup } catch {} }
     try {
-        $eb = Join-Path (Get-UserCtx).Roam 'ErodyneBackup\impostazioni.txt'
+        $eb = Join-Path (Get-UserCtx).Roam 'ErodyBackup\impostazioni.txt'
         if (Test-Path -LiteralPath $eb) {
             $v = (Get-Content -LiteralPath $eb -Encoding UTF8 | Where-Object { $_ -match '^ultimo=' } | Select-Object -First 1) -replace '^ultimo=', ''
             if ($v) { $t = [datetime]$v; if (-not $last['bk'] -or $t -gt $last['bk']) { $last['bk'] = $t } }
@@ -6925,7 +6925,7 @@ try {
 try { Update-BackupTask } catch { Write-ErrLog "Backup: $($_.Exception.Message)" }
 if ($Settings.BackupAuto -and -not (Get-SuiteAppPath 'backup')) {
     if ([string]$Settings.LastBkNag -ne (Get-Date).ToString('yyyyMMdd')) {
-        Toast "Il backup ora è in Erodyne Backup: installalo dalla Erodyne Suite (fino ad allora il backup automatico continua come prima)"
+        Toast "Il backup ora è in ErodyBackup: installalo dalla Erodyne Suite (fino ad allora il backup automatico continua come prima)"
         $Settings | Add-Member -NotePropertyName LastBkNag -NotePropertyValue (Get-Date).ToString('yyyyMMdd') -Force; Save-Settings
     }
 }
